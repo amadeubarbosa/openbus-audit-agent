@@ -271,6 +271,11 @@ local function shouldreceivebody(reqt, code)
     return 1
 end
 
+local function shouldkeepalive(reqt)
+    return reqt.headers["connection"] and 
+           (string.lower(reqt.headers["connection"]) == "keep-alive")
+end
+
 -- forward declarations
 local trequest, tredirect
 
@@ -296,8 +301,14 @@ function trequest(reqt)
     -- we loop until we get what we want, or
     -- until we are sure there is no way to get it
     local nreqt = adjustrequest(reqt)
-    local h = ( (nreqt.headers["connection"] == "keep-alive") and wrap(nreqt.connection) )
-              or open(nreqt.host, nreqt.port, nreqt.create)
+    local h do
+        if shouldkeepalive(nreqt) and nreqt.connection ~= nil then
+            h = nreqt.connection and wrap(nreqt.connection)
+        else
+            h = open(nreqt.host, nreqt.port, nreqt.create)
+            nreqt.connection = h
+        end
+    end
     -- send request line and headers
     h:sendrequestline(nreqt.method, nreqt.uri)
     h:sendheaders(nreqt.headers)
@@ -328,7 +339,7 @@ function trequest(reqt)
     if shouldreceivebody(nreqt, code) then
         h:receivebody(headers, nreqt.sink, nreqt.step)
     end
-    if nreqt.headers["connection"] ~= "keep-alive" then
+    if not shouldkeepalive(nreqt) then
         h:close()
     end
     return 1, code, headers, status
