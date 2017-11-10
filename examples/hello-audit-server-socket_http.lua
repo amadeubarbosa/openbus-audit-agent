@@ -6,6 +6,7 @@ local table = require "table"
 local string = require "string"
 local coroutine = require "coroutine"
 local running = coroutine.running
+local status = coroutine.status
 local newthread = coroutine.create
 local cothread = require "cothread"
 local schedule = cothread.schedule
@@ -14,6 +15,16 @@ cothread.plugin(require "cothread.plugin.socket")
 local socket = require "cothread.socket"
 local newtcp = socket.tcp
 
+local http = require "socket.http"
+local httpreq = http.request
+http.TIMEOUT = 15
+
+local ltn12 = require "ltn12"
+local strsrc = ltn12.source.string
+local tabsnk = ltn12.sink.table
+
+local url = require "socket.url"
+
 local oil = require "oil"
 
 local oo = require "openbus.util.oo"
@@ -21,39 +32,36 @@ local log = require "openbus.util.logger"
 local setuplog = require("openbus.util.server").setuplog
 local msg = require "openbus.core.messages"
 
--- lib extension
-function threadid()
-    return tostring(running())
-end
-
-local http = require "socket.http"
-local httpreq = http.request
-
-local ltn12 = require "ltn12"
-local strsrc = ltn12.source.string
-local tabsnk = ltn12.sink.table
-
-function httppost(url, request, sock)
-  local body = {}
-  log:action(msg.HttpAgentSendingPost:tag{url=url, connection = tostring(sock.__object), request=request, thread=threadid()})
-  local ok, code, headers, status = httpreq{
-    url = url,
-    connection = sock,
-    create = newtcp,
-    source = strsrc(request),
-    sink = tabsnk(body),
-    headers = {
-      ["content-length"] = #request,
-      ["content-type"] = "application/json;charset=utf-8",
-      ["accept"] = "application/json",
-      ["connection"] = "keep-alive",
-    },
-    method = "POST",
-  }
-  if not ok or tonumber(code) ~= 200 then
-    error(msg.HttpPostFailed:tag{code = code, status = status, request = request, result = body})
-  else
-    return body
+function httpconnection(endpoint, location)
+  local parsed = url.parse(endpoint)
+  local sock = newtcp()
+  sock:connect(parsed.host, parsed.port)
+  local url = endpoint..( location or "" )
+  
+  return 
+  function(request)
+    local thread = tostring(running())
+    local body = {}
+    local ok, code, headers, status = httpreq{
+      url = url,
+      connection = sock,
+      create = newtcp,
+      source = strsrc(request),
+      sink = tabsnk(body),
+      headers = {
+        ["content-length"] = #request,
+        ["content-type"] = "application/json;charset=utf-8",
+        ["accept"] = "application/json",
+        ["connection"] = "keep-alive",
+      },
+      method = "POST",
+    }
+    if not ok or tonumber(code) ~= 200 then
+      error(msg.HttpPostFailed:tag{code = code, status = status, request = request, agent=thread, result = body})
+    else
+      log:action(msg.HttpPostSuccessfullySent:tag{url=url, request=request, agent=thread})
+      return body
+    end
   end
 end
 
@@ -65,23 +73,9 @@ setuplog(log, 5)
 
 local consumer = { -- forward declaration
   _running = false, -- critical region
-  _thread = false, -- cothread
+  _thread = {}, -- cothreads
+  _sleep = {},
 }
-
-function consumer:wait()
-  self._running = false
-  cothread.suspend()
-  self._running = true
-end
-
-function consumer:suspended()
-  return self._running == false
-end
-
-function consumer:reschedule()
-  self._running = true
-  cothread.schedule(self._thread, "last") -- wake up
-end
 
 local fifo = {
   _first = 1,
@@ -102,35 +96,54 @@ end
 function fifo:push(event)
   self[self._first] = event
   self._first = self._first + 1
-  if consumer:suspended() then
-    -- print("waking up ", consumer._thread)
-    consumer:reschedule()
-  else
-    -- print("is not necessary wake up ", consumer._thread)
-  end
+  consumer:reschedule()
 end
 
 -- consumer
-local endpoint = "http://localhost:51400"
+local httpfactory = function() return httpconnection("http://localhost:51400", "/") end
+local httppost = httpfactory()
+local httpmaxclients = 5
 
-consumer._thread = newthread(function()
-  local sock = socket.tcp()
-  sock:connect("localhost", 51400)
-  while true do
-    if fifo:empty() then -- wait
-      log:action(msg.AuditAgentIsWaitingForData)
-      consumer:wait()
-    else -- pop
-      local data = fifo:pop()
-      local str = string.format("audit data { count = %d }", data.count)
-      local ok, result = pcall(httppost, endpoint, '[{"body":"'..str..'"}]', sock)
-      if not ok then
-        log:exception(msg.AuditAgentFailure:tag{error=result})
-      end
+function consumer:reschedule()
+  for i=1, httpmaxclients do
+    if (self._sleep[i] == true) then
+      self._sleep[i] = false
+      cothread.schedule(self._thread[i], "last") -- wake up
     end
-    -- print("memory in use:", collectgarbage("count"))
   end
-end)
+end
+
+for i=1, httpmaxclients do
+  consumer._sleep[i] = false
+  consumer._thread[i] = newthread(function()
+    local threadid = tostring(running())
+    while true do
+      if fifo:empty() then -- wait
+        log:action(msg.AuditAgentIsWaitingForData:tag{agent=threadid})
+        consumer._sleep[i] = true
+        cothread.suspend()
+        consumer._sleep[i] = false
+      else -- pop
+        local data = fifo:pop()
+        local str = string.format("audit data { count = %d }", data.count)
+        local ok, result = pcall(httppost, '[{"body":"'..str..'"}]')
+        if not ok then
+          local exception = result[1]
+          if exception == "timeout" or exception == "closed" then -- reconnect
+            httppost = httpfactory()
+            fifo:push(data)
+            log:action(msg.AuditAgentReconnecting:tag{cause=exception, agent=threadid, request=str})
+          else
+            log:exception(msg.AuditAgentFailure:tag{error=result, agent=threadid})
+          end
+        end
+        cothread.last()
+      end
+      -- print("memory in use:", collectgarbage("count"))
+    end
+  end)
+  cothread.schedule(consumer._thread[i], "last")
+end
 
 -- main
 local orb = oil.init({port=2266, flavor="cooperative;corba.intercepted"})
