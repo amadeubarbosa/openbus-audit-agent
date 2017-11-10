@@ -5,12 +5,14 @@ local assert = _G.assert
 local table = require "table"
 local string = require "string"
 local coroutine = require "coroutine"
+local running = coroutine.running
 local newthread = coroutine.create
 local cothread = require "cothread"
 local schedule = cothread.schedule
 local unschedule = cothread.unschedule
 cothread.plugin(require "cothread.plugin.socket")
 local socket = require "cothread.socket"
+local newtcp = socket.tcp
 
 local oil = require "oil"
 
@@ -20,14 +22,8 @@ local setuplog = require("openbus.util.server").setuplog
 local msg = require "openbus.core.messages"
 
 -- lib extension
-function string.split(str,ch)
-  local pat = string.len(ch) == 1 and "[^"..ch.."]*" or ch
-  local tbl={}
-  str:gsub(pat,function(x) if x ~= "" then tbl[#tbl+1]=x end end)
-  return tbl
-end
-function coroutine.id()
-    return tostring(coroutine.running())
+function threadid()
+    return tostring(running())
 end
 
 local http = require "socket.http"
@@ -37,12 +33,12 @@ local ltn12 = require "ltn12"
 local strsrc = ltn12.source.string
 local tabsnk = ltn12.sink.table
 
-function httppost(param)
-  local url, result, request = param.url, param.result, param.request
+function httppost(url, request, sock)
   local body = {}
-  log:action(msg.HttpAgentSendingPost:tag{host=url, thread=coroutine.id()})
+  log:action(msg.HttpAgentSendingPost:tag{url=url, connection = tostring(sock.__object), request=request, thread=threadid()})
   local ok, code, headers, status = httpreq{
     url = url,
+    connection = sock,
     create = newtcp,
     source = strsrc(request),
     sink = tabsnk(body),
@@ -50,11 +46,12 @@ function httppost(param)
       ["content-length"] = #request,
       ["content-type"] = "application/json;charset=utf-8",
       ["accept"] = "application/json",
+      ["connection"] = "keep-alive",
     },
     method = "POST",
   }
   if not ok or tonumber(code) ~= 200 then
-    error(msg.HttpPostFailed:tag{code = code, result = body})
+    error(msg.HttpPostFailed:tag{code = code, status = status, request = request, result = body})
   else
     return body
   end
@@ -82,7 +79,7 @@ function consumer:suspended()
 end
 
 function consumer:reschedule()
-  
+  self._running = true
   cothread.schedule(self._thread, "last") -- wake up
 end
 
@@ -106,10 +103,10 @@ function fifo:push(event)
   self[self._first] = event
   self._first = self._first + 1
   if consumer:suspended() then
-    --print("waking up ", consumer._thread)
+    -- print("waking up ", consumer._thread)
     consumer:reschedule()
   else
-    --print("is not necessary wake up ", consumer._thread)
+    -- print("is not necessary wake up ", consumer._thread)
   end
 end
 
@@ -117,30 +114,26 @@ end
 local endpoint = "http://localhost:51400"
 
 consumer._thread = newthread(function()
+  local sock = socket.tcp()
+  sock:connect("localhost", 51400)
   while true do
     if fifo:empty() then -- wait
-      print(string.format("[%s] waiting for data", oil.time()))
+      log:action(msg.AuditAgentIsWaitingForData)
       consumer:wait()
     else -- pop
       local data = fifo:pop()
-      local str = string.format("[%s] consuming data { count = %d }", oil.time(), data.count)
-      print(str)
-      local ok, result = pcall(httppost, {
-        url = endpoint,
-        request = '[{"body":"'..str..'"}]',
-        result = {},
-        })
-      log:print(
-        ok and msg.DataSentToAuditService:tag{result = result} 
-           or  msg.FailedToSendToAuditService:tag{error=result}
-      )
-      consumer:reschedule()
+      local str = string.format("audit data { count = %d }", data.count)
+      local ok, result = pcall(httppost, endpoint, '[{"body":"'..str..'"}]', sock)
+      if not ok then
+        log:exception(msg.AuditAgentFailure:tag{error=result})
+      end
     end
+    -- print("memory in use:", collectgarbage("count"))
   end
 end)
 
 -- main
-local orb = oil.init({port=2266})
+local orb = oil.init({port=2266, flavor="cooperative;corba.intercepted"})
 
 orb:loadidl[[
 interface Hello {
@@ -149,11 +142,23 @@ interface Hello {
 ]]
 
 local count = 0
+
+local interceptor = {hold={}}
+function interceptor:receiverequest(request)
+  count = count + 1
+  self.hold[running()] = count
+end
+
+function interceptor:sendreply(request)
+  fifo:push{ count = self.hold[running()] }
+  self.hold[running()] = nil
+end
+
+orb:setinterceptor(interceptor, "corba.server")
+
 orb:newservant(
-  {sayhello = function(self, msg)  
-    count = count + 1
-    fifo:push({count = count})
-    --print("received ".. msg)
+  {sayhello = function(self, msg)
+    print("server receive a message:",msg)
   end},
   "Hello",
   "IDL:Hello:1.0");

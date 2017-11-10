@@ -105,6 +105,16 @@ end
 -----------------------------------------------------------------------------
 local metat = { __index = {} }
 
+function wrap(sock)
+    local h = base.setmetatable({ c = sock }, metat)
+    -- create finalized try
+    h.try = socket.newtry(function() h:close() end)
+    -- set timeout before connecting
+    h.try(sock:settimeout(TIMEOUT))
+    -- here everything worked
+    return h
+end
+
 function open(host, port, create)
     -- create socket with user connect function, or with default
     local c = socket.try((create or socket.tcp)())
@@ -286,7 +296,8 @@ function trequest(reqt)
     -- we loop until we get what we want, or
     -- until we are sure there is no way to get it
     local nreqt = adjustrequest(reqt)
-    local h = open(nreqt.host, nreqt.port, nreqt.create)
+    local h = ( (nreqt.headers["connection"] == "keep-alive") and wrap(nreqt.connection) )
+              or open(nreqt.host, nreqt.port, nreqt.create)
     -- send request line and headers
     h:sendrequestline(nreqt.method, nreqt.uri)
     h:sendheaders(nreqt.headers)
@@ -317,7 +328,9 @@ function trequest(reqt)
     if shouldreceivebody(nreqt, code) then
         h:receivebody(headers, nreqt.sink, nreqt.step)
     end
-    h:close()
+    if nreqt.headers["connection"] ~= "keep-alive" then
+        h:close()
+    end
     return 1, code, headers, status
 end
 

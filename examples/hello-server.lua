@@ -7,6 +7,6 @@ interface Hello {
 };
 ]]
 
-orb:newservant({sayhello = function(self, msg)  end}, "Hello", "IDL:Hello:1.0");
+orb:newservant({sayhello = function(self, msg) print(msg) end}, "Hello", "IDL:Hello:1.0");
 
 orb:run()
