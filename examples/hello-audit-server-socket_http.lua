@@ -2,6 +2,8 @@ local _G = require "_G"
 local pairs = _G.pairs
 local assert = _G.assert
 
+local date = require "os".date
+
 local table = require "table"
 local string = require "string"
 local coroutine = require "coroutine"
@@ -17,13 +19,18 @@ local newtcp = socket.tcp
 
 local http = require "socket.http"
 local httpreq = http.request
-http.TIMEOUT = 15
+http.TIMEOUT = 15 -- seconds
+
+local RETRY_TIMEOUT = 1      -- seconds
+local CONCURRENT_CLIENTS = 5 -- seconds
 
 local ltn12 = require "ltn12"
 local strsrc = ltn12.source.string
 local tabsnk = ltn12.sink.table
 
 local url = require "socket.url"
+
+local uuid = require "uuid"
 
 local oil = require "oil"
 
@@ -52,7 +59,7 @@ function httpconnection(endpoint, location)
         ["content-length"] = #request,
         ["content-type"] = "application/json;charset=utf-8",
         ["accept"] = "application/json",
-        ["connection"] = "keep-alive",
+        ["connection"] = "close",
       },
       method = "POST",
     }
@@ -100,12 +107,12 @@ function fifo:push(event)
 end
 
 -- consumer
-local httpfactory = function() return httpconnection("http://localhost:51400", "/") end
+-- local httpfactory = function() return httpconnection("http://localhost:51400", "/") end
+local httpfactory = function() return httpconnection("http://localhost:51398", "/") end
 local httppost = httpfactory()
-local httpmaxclients = 5
 
 function consumer:reschedule()
-  for i=1, httpmaxclients do
+  for i=1, CONCURRENT_CLIENTS do
     if (self._sleep[i] == true) then
       self._sleep[i] = false
       cothread.schedule(self._thread[i], "last") -- wake up
@@ -113,7 +120,32 @@ function consumer:reschedule()
   end
 end
 
-for i=1, httpmaxclients do
+local function dateformat(timestamp)
+  local mili = string.format("%.3f", timestamp):match("%.(%d%d%d)")
+  return date("%Y-%m-%d %H:%M:%S.", math.modf(timestamp))..mili
+end
+
+local function jsonstringfy(event)
+  if type(event.interfaceName) ~= "string" then
+    event.interfaceName = tostring(event.interfaceName)
+  end
+  if type(event.ipOrigin) ~= "string" then
+    local address = event.ipOrigin
+    event.ipOrigin = string.format("%s:%d ", assert(address.host), assert(address.port))
+  end
+  if type(event.timestamp) == "number" then
+    event.timestamp = dateformat(event.timestamp) -- date format stringfy
+  end
+
+  local json = ""
+  for k,v in pairs(event) do
+    json = json .."\"".. k .. "\":\"" .. v .."\","
+  end
+  json = json:gsub(",$","")
+  return "{"..json.."}"
+end
+
+for i=1, CONCURRENT_CLIENTS do
   consumer._sleep[i] = false
   consumer._thread[i] = newthread(function()
     local threadid = tostring(running())
@@ -125,21 +157,21 @@ for i=1, httpmaxclients do
         consumer._sleep[i] = false
       else -- pop
         local data = fifo:pop()
-        local str = string.format("audit data { count = %d }", data.count)
-        local ok, result = pcall(httppost, '[{"body":"'..str..'"}]')
+        local json = type(data) == "table" and jsonstringfy(data) or (type(data) == "string" and data) or error("data collected is unknown")
+        -- local ok, result = pcall(httppost, '[{"body":"'..json..'"}]')
+        local ok, result = pcall(httppost, json)
         if not ok then
           local exception = result[1]
-          if exception == "timeout" or exception == "closed" then -- reconnect
-            httppost = httpfactory()
-            fifo:push(data)
-            log:action(msg.AuditAgentReconnecting:tag{cause=exception, agent=threadid, request=str})
-          else
-            log:exception(msg.AuditAgentFailure:tag{error=result, agent=threadid})
-          end
+          -- prevent IO-bound task when service is offline, no route to host or refused
+          socket.sleep(RETRY_TIMEOUT)
+          -- recreate the connection and try again
+          httppost = httpfactory()
+          fifo:push(data)
+          log:exception(msg.AuditAgentReconnecting:tag{error=exception, agent=threadid, request=json})
         end
         cothread.last()
       end
-      -- print("memory in use:", collectgarbage("count"))
+      print("memory in use:", collectgarbage("count"))
     end
   end)
   cothread.schedule(consumer._thread[i], "last")
@@ -154,17 +186,35 @@ interface Hello {
 };
 ]]
 
-local count = 0
+local NullValue = "<EMPTY>"
+local UnknownUser = "UNKNOWN_USER"
 
-local interceptor = {hold={}}
+local interceptor = {audit={}}
 function interceptor:receiverequest(request)
-  count = count + 1
-  self.hold[running()] = count
+  local id = uuid.new()
+  self.audit[running()] = {
+    id = id,
+    solutionCode = "BEEP",
+    actioName = request.operation_name,
+    timestamp = cothread.now(),
+    userName = "UserBoss",
+    input = NullValue, --TODO: request parameters
+    output = NullValue, --TODO: results
+    resultCode = (request.success and "true") or
+      ((request.success == false) and "false") or NullValue,
+    environment = "TST",
+    openbusProtocol = "v0_9",
+    interfaceName = request.interface.repID,
+    ipOrigin = request.channel_address,
+    loginId = id,
+  }
 end
 
 function interceptor:sendreply(request)
-  fifo:push{ count = self.hold[running()] }
-  self.hold[running()] = nil
+  local event = self.audit[running()]
+  self.audit[running()] = nil
+  event.duration = cothread.now() - event.timestamp -- duration (miliseconds)
+  fifo:push(event)
 end
 
 orb:setinterceptor(interceptor, "corba.server")
