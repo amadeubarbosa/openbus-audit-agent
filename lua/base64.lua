@@ -21,9 +21,7 @@
 
 ---
 -- Base64 encoding was ported back to Lua5.2 from http://lua-users.org/wiki/BaseSixtyFour
--- Base64 decoding was written by Patrick Donnelly <batrick@batbytes.com> 
---        and its original version is available https://svn.nmap.org/nmap/nselib/base64.lua
-
+-- Base64 decoding was ported back to Lua5.2 from https://svn.nmap.org/nmap/nselib/base64.lua
 
 local bit32 = require "bit32"
 local rshift = bit32.rshift
