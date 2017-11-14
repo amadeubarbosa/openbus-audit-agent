@@ -1,9 +1,9 @@
 local _G = require "_G"
 local pairs = _G.pairs
 local assert = _G.assert
+local tostring = _G.tostring
 
 local date = require "os".date
-
 local table = require "table"
 local string = require "string"
 local coroutine = require "coroutine"
@@ -17,22 +17,24 @@ cothread.plugin(require "cothread.plugin.socket")
 local socket = require "cothread.socket"
 local newtcp = socket.tcp
 
+local url = require "socket.url"
 local http = require "socket.http"
 local httpreq = http.request
 http.TIMEOUT = 15 -- seconds
-
-local RETRY_TIMEOUT = 1      -- seconds
-local CONCURRENT_CLIENTS = 5 -- seconds
 
 local ltn12 = require "ltn12"
 local strsrc = ltn12.source.string
 local tabsnk = ltn12.sink.table
 
-local url = require "socket.url"
+local RETRY_TIMEOUT = 1      -- seconds
+local CONCURRENT_CLIENTS = 5 -- seconds
 
 local uuid = require "uuid"
 
 local oil = require "oil"
+
+local serializer = require "loop.serial.StringStream"
+local base64 = require "base64"
 
 local oo = require "openbus.util.oo"
 local log = require "openbus.util.logger"
@@ -64,7 +66,7 @@ function httpconnection(endpoint, location)
       method = "POST",
     }
     if not ok or tonumber(code) ~= 200 then
-      error(msg.HttpPostFailed:tag{code = code, status = status, request = request, agent=thread, result = body})
+      error{msg.HttpPostFailed:tag{code = code, status = status, request = request, agent=thread, result = body}} -- almost like an exception
     else
       log:action(msg.HttpPostSuccessfullySent:tag{url=url, request=request, agent=thread})
       return body
@@ -131,18 +133,27 @@ local function jsonstringfy(event)
   end
   if type(event.ipOrigin) ~= "string" then
     local address = event.ipOrigin
-    event.ipOrigin = string.format("%s:%d ", assert(address.host), assert(address.port))
+    event.ipOrigin = string.format("%s:%d", assert(address.host), assert(address.port))
   end
   if type(event.timestamp) == "number" then
     event.timestamp = dateformat(event.timestamp) -- date format stringfy
   end
-
-  local json = ""
-  for k,v in pairs(event) do
-    json = json .."\"".. k .. "\":\"" .. v .."\","
+  if type(event.input) ~= "string" then
+    local stream = serializer()
+    stream:put(event.input)
+    event.input = base64.encode(stream:__tostring())
   end
-  json = json:gsub(",$","")
-  return "{"..json.."}"
+  if type(event.output) ~= "string" then
+    local stream = serializer()
+    stream:put(event.output)
+    event.output = base64.encode(stream:__tostring())
+  end
+
+  local json = "{"
+  for k,v in pairs(event) do
+    json = json .. string.format("%q:%q,", k,v)
+  end
+  return json:gsub(",$","}")
 end
 
 for i=1, CONCURRENT_CLIENTS do
@@ -157,17 +168,22 @@ for i=1, CONCURRENT_CLIENTS do
         consumer._sleep[i] = false
       else -- pop
         local data = fifo:pop()
-        local json = type(data) == "table" and jsonstringfy(data) or (type(data) == "string" and data) or error("data collected is unknown")
-        -- local ok, result = pcall(httppost, '[{"body":"'..json..'"}]')
-        local ok, result = pcall(httppost, json)
-        if not ok then
-          local exception = result[1]
-          -- prevent IO-bound task when service is offline, no route to host or refused
-          socket.sleep(RETRY_TIMEOUT)
-          -- recreate the connection and try again
-          httppost = httpfactory()
-          fifo:push(data)
-          log:exception(msg.AuditAgentReconnecting:tag{error=exception, agent=threadid, request=json})
+        local datatype = type(data)
+        if datatype == "table" or datatype == "string" then
+          local json = (datatype == "table" and jsonstringfy(data)) or data
+          -- local ok, result = pcall(httppost, '[{"body":"'..json..'"}]')
+          local ok, result = pcall(httppost, json)
+          if not ok then
+            local exception = result[1]
+            -- prevent IO-bound task when service is offline, no route to host or refused
+            socket.sleep(RETRY_TIMEOUT)
+            -- recreate the connection and try again
+            httppost = httpfactory()
+            fifo:push(data)
+            log:exception(msg.AuditAgentReconnecting:tag{error=exception, agent=threadid, request=json})
+          end
+        else
+          log:exception(msg.AuditAgentDiscardedUnsupportedData:tag{datatype=datatype})
         end
         cothread.last()
       end
@@ -198,10 +214,7 @@ function interceptor:receiverequest(request)
     actioName = request.operation_name,
     timestamp = cothread.now(),
     userName = "UserBoss",
-    input = NullValue, --TODO: request parameters
-    output = NullValue, --TODO: results
-    resultCode = (request.success and "true") or
-      ((request.success == false) and "false") or NullValue,
+    input = request.parameters or NullValue,
     environment = "TST",
     openbusProtocol = "v0_9",
     interfaceName = request.interface.repID,
@@ -211,9 +224,14 @@ function interceptor:receiverequest(request)
 end
 
 function interceptor:sendreply(request)
-  local event = self.audit[running()]
-  self.audit[running()] = nil
-  event.duration = cothread.now() - event.timestamp -- duration (miliseconds)
+  local threadid = running()
+  local event do
+    event = self.audit[threadid]
+    self.audit[threadid] = nil
+    event.duration = cothread.now() - event.timestamp -- duration (miliseconds)
+    event.resultCode = tostring(request.success)
+    event.output = request.results or NullValue
+  end
   fifo:push(event)
 end
 
