@@ -26,9 +26,6 @@ local ltn12 = require "ltn12"
 local strsrc = ltn12.source.string
 local tabsnk = ltn12.sink.table
 
-local RETRY_TIMEOUT = 1      -- seconds
-local CONCURRENT_CLIENTS = 5 -- seconds
-
 local uuid = require "uuid"
 
 local oil = require "oil"
@@ -49,7 +46,7 @@ function httpconnection(endpoint, location)
   
   return 
   function(request)
-    local thread = tostring(running())
+    local threadid = tostring(running())
     local body = {}
     local ok, code, headers, status = httpreq{
       url = url,
@@ -61,14 +58,14 @@ function httpconnection(endpoint, location)
         ["content-length"] = #request,
         ["content-type"] = "application/json;charset=utf-8",
         ["accept"] = "application/json",
-        ["connection"] = "close",
+        ["connection"] = "keep-alive",
       },
       method = "POST",
     }
     if not ok or tonumber(code) ~= 200 then
-      error{msg.HttpPostFailed:tag{code = code, status = status, request = request, agent=thread, result = body}} -- almost like an exception
+      error{msg.HttpPostFailed:tag{code = code, status = status, request = request, agent=threadid, result = body}} -- almost like an exception
     else
-      log:action(msg.HttpPostSuccessfullySent:tag{url=url, request=request, agent=thread})
+      log:action(msg.HttpPostSuccessfullySent:tag{url=url, request=request, agent=threadid})
       return body
     end
   end
@@ -81,9 +78,10 @@ end
 setuplog(log, 5)
 
 local consumer = { -- forward declaration
-  _running = false, -- critical region
-  _thread = {}, -- cothreads
-  _sleep = {},
+  _threads = {}, -- cothreads
+  _suspend = {}, -- critical regions
+  _maxclients = 5, -- max cothreads using fifo
+  _retrytimeout = 1, -- seconds to wait before retry http post
 }
 
 local fifo = {
@@ -96,10 +94,10 @@ function fifo:empty()
 end
 
 function fifo:pop()
-  local data = self[self._last]
+  local event = self[self._last]
   self[self._last] = nil
   self._last = self._last + 1
-  return data
+  return event
 end
 
 function fifo:push(event)
@@ -114,10 +112,12 @@ local httpfactory = function() return httpconnection("http://localhost:51398", "
 local httppost = httpfactory()
 
 function consumer:reschedule()
-  for i=1, CONCURRENT_CLIENTS do
-    if (self._sleep[i] == true) then
-      self._sleep[i] = false
-      cothread.schedule(self._thread[i], "last") -- wake up
+  local threads = self._threads
+  local suspend = self._suspend
+  for i=1, #threads do
+    if (suspend[i] == true) then
+      suspend[i] = false
+      cothread.schedule(threads[i], "last") -- wake up
     end
   end
 end
@@ -156,59 +156,60 @@ local function jsonstringfy(event)
   return json:gsub(",$","}")
 end
 
-for i=1, CONCURRENT_CLIENTS do
-  consumer._sleep[i] = false
-  consumer._thread[i] = newthread(function()
-    local threadid = tostring(running())
-    while true do
-      if fifo:empty() then -- wait
-        log:action(msg.AuditAgentIsWaitingForData:tag{agent=threadid})
-        consumer._sleep[i] = true
-        cothread.suspend()
-        consumer._sleep[i] = false
-      else -- pop
-        local data = fifo:pop()
-        local datatype = type(data)
-        if datatype == "table" or datatype == "string" then
-          local json = (datatype == "table" and jsonstringfy(data)) or data
-          -- local ok, result = pcall(httppost, '[{"body":"'..json..'"}]')
-          local ok, result = pcall(httppost, json)
-          if not ok then
-            local exception = result[1]
-            -- prevent IO-bound task when service is offline, no route to host or refused
-            socket.sleep(RETRY_TIMEOUT)
-            -- recreate the connection and try again
-            httppost = httpfactory()
-            fifo:push(data)
-            log:exception(msg.AuditAgentReconnecting:tag{error=exception, agent=threadid, request=json})
+function consumer:init()
+  local retrytimeout = self._retrytimeout
+  local waitfor = socket.sleep
+  local suspend = self._suspend
+  local threads = self._threads
+  for i=1, self._maxclients do
+    local agent = newthread(function()
+      local threadid = tostring(running())
+      while true do
+        if fifo:empty() then -- wait
+          log:action(msg.AuditAgentIsWaitingForData:tag{agent=threadid})
+          suspend[i] = true
+          cothread.suspend()
+          suspend[i] = false
+        else -- pop
+          local data = fifo:pop()
+          local datatype = type(data)
+          if datatype == "table" or datatype == "string" then
+            local json = (datatype == "table" and jsonstringfy(data)) or data
+            -- local ok, result = pcall(httppost, '[{"body":"'..json..'"}]')
+            local ok, result = pcall(httppost, json)
+            if not ok then
+              local exception = result[1]
+              -- prevent IO-bound task when service is offline
+              waitfor(retrytimeout)
+              -- recreate the connection and try again
+              httppost = httpfactory()
+              fifo:push(json)
+              log:exception(msg.AuditAgentReconnecting:tag{error=exception, agent=threadid, request=json})
+            end
+          else
+            log:exception(msg.AuditAgentDiscardedUnsupportedData:tag{datatype=datatype, data=data})
           end
-        else
-          log:exception(msg.AuditAgentDiscardedUnsupportedData:tag{datatype=datatype})
+          cothread.last()
         end
-        cothread.last()
+        print("memory in use:", collectgarbage("count"))
       end
-      print("memory in use:", collectgarbage("count"))
-    end
-  end)
-  cothread.schedule(consumer._thread[i], "last")
+    end)
+    suspend[i] = false
+    threads[i] = agent
+    cothread.schedule(agent, "last")
+  end
 end
 
--- main
-local orb = oil.init({port=2266, flavor="cooperative;corba.intercepted"})
-
-orb:loadidl[[
-interface Hello {
-  void sayhello(in string msg);
-};
-]]
+-- corba interceptor
 
 local NullValue = "<EMPTY>"
 local UnknownUser = "UNKNOWN_USER"
 
-local interceptor = {audit={}}
+local interceptor = {audit={}, fifo=fifo}
 function interceptor:receiverequest(request)
   local id = uuid.new()
-  self.audit[running()] = {
+  local thread = running()
+  self.audit[thread] = {
     id = id,
     solutionCode = "BEEP",
     actioName = request.operation_name,
@@ -224,17 +225,28 @@ function interceptor:receiverequest(request)
 end
 
 function interceptor:sendreply(request)
-  local threadid = running()
-  local event do
-    event = self.audit[threadid]
-    self.audit[threadid] = nil
+  local thread = running()
+  if self.audit[thread] ~= nil then
+    local event = self.audit[thread]
+    self.audit[thread] = nil
     event.duration = cothread.now() - event.timestamp -- duration (miliseconds)
     event.resultCode = tostring(request.success)
     event.output = request.results or NullValue
+    self.fifo:push(event)
   end
-  fifo:push(event)
 end
 
+-- main
+
+consumer:init()
+
+local orb = oil.init({port=2266, flavor="cooperative;corba.intercepted"})
+
+orb:loadidl[[
+interface Hello {
+  void sayhello(in string msg);
+};
+]]
 orb:setinterceptor(interceptor, "corba.server")
 
 orb:newservant(
