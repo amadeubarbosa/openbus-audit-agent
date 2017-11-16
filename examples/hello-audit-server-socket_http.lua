@@ -5,6 +5,9 @@ local tostring = _G.tostring
 
 local date = require "os".date
 local table = require "table"
+local concat = table.concat
+local insert = table.insert
+
 local string = require "string"
 local coroutine = require "coroutine"
 local running = coroutine.running
@@ -62,8 +65,9 @@ function httpconnection(endpoint, location)
       },
       method = "POST",
     }
-    if not ok or tonumber(code) ~= 200 then
-      error{msg.HttpPostFailed:tag{code = code, status = status, request = request, agent=threadid, result = body}} -- almost like an exception
+    if not ok or (tonumber(code) ~= 200 and tonumber(code) ~= 201) then
+      -- using error almost like an exception
+      error{msg.HttpPostFailed:tag{url=url, request=request, agent=threadid, code=code, status=status, body=concat(body)}}
     else
       log:action(msg.HttpPostSuccessfullySent:tag{url=url, request=request, agent=threadid})
       return body
@@ -79,7 +83,7 @@ setuplog(log, 5)
 
 local consumer = { -- forward declaration
   _threads = {}, -- cothreads
-  _suspend = {}, -- critical regions
+  _waiting = {}, -- critical regions
   _maxclients = 5, -- max cothreads using fifo
   _retrytimeout = 1, -- seconds to wait before retry http post
 }
@@ -113,10 +117,10 @@ local httppost = httpfactory()
 
 function consumer:reschedule()
   local threads = self._threads
-  local suspend = self._suspend
+  local waiting = self._waiting
   for i=1, #threads do
-    if (suspend[i] == true) then
-      suspend[i] = false
+    if (waiting[i] == true) then
+      waiting[i] = false
       cothread.schedule(threads[i], "last") -- wake up
     end
   end
@@ -149,17 +153,17 @@ local function jsonstringfy(event)
     event.output = base64.encode(stream:__tostring())
   end
 
-  local json = "{"
+  local result = {}
   for k,v in pairs(event) do
-    json = json .. string.format("%q:%q,", k,v)
+    insert(result, string.format("%q:%q", k,v))
   end
-  return json:gsub(",$","}")
+  return "{"..concat(result, ",").."}"
 end
 
 function consumer:init()
   local retrytimeout = self._retrytimeout
   local waitfor = socket.sleep
-  local suspend = self._suspend
+  local waiting = self._waiting
   local threads = self._threads
   for i=1, self._maxclients do
     local agent = newthread(function()
@@ -167,9 +171,8 @@ function consumer:init()
       while true do
         if fifo:empty() then -- wait
           log:action(msg.AuditAgentIsWaitingForData:tag{agent=threadid})
-          suspend[i] = true
+          waiting[i] = true
           cothread.suspend()
-          suspend[i] = false
         else -- pop
           local data = fifo:pop()
           local datatype = type(data)
@@ -194,7 +197,7 @@ function consumer:init()
         print("memory in use:", collectgarbage("count"))
       end
     end)
-    suspend[i] = false
+    waiting[i] = false
     threads[i] = agent
     cothread.schedule(agent, "last")
   end
@@ -229,7 +232,7 @@ function interceptor:sendreply(request)
   if self.audit[thread] ~= nil then
     local event = self.audit[thread]
     self.audit[thread] = nil
-    event.duration = cothread.now() - event.timestamp -- duration (miliseconds)
+    event.duration = (cothread.now() - event.timestamp) * 1000 -- duration (ms)
     event.resultCode = tostring(request.success)
     event.output = request.results or NullValue
     self.fifo:push(event)

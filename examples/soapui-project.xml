@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<con:soapui-project id="02feb61b-53bc-48f0-87c7-9018284be860" activeEnvironment="Default" name="REST Project 1" soapui-version="5.3.0" xmlns:con="http://eviware.com/soapui/config"><con:settings/><con:interface xsi:type="con:RestService" id="2eb527c2-3359-40c3-8c32-140d911c8bd3" wadlVersion="http://wadl.dev.java.net/2009/02" name="http://srvintegracaotst.ep.petrobras.com.br" type="rest" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><con:settings/><con:definitionCache/><con:endpoints><con:endpoint>http://srvintegracaotst.ep.petrobras.com.br</con:endpoint></con:endpoints><con:resource name="Publish" path="/audit-service/api/publish" id="d414e675-9ea9-4105-8ee6-20fa441e79a4"><con:settings/><con:parameters/><con:method name="Publish 1" id="d387a7ff-9d52-413f-aa00-8401bdd7b2b4" method="POST"><con:settings/><con:parameters/><con:representation type="REQUEST"><con:mediaType>application/json</con:mediaType><con:params/></con:representation><con:representation type="FAULT"><con:mediaType>text/html; charset=UTF-8</con:mediaType><con:status>403</con:status><con:params/><con:element>html</con:element></con:representation><con:request name="Request 1" id="e060e13f-52ed-4365-9c2a-89343d8922d0" mediaType="application/json" postQueryString="false"><con:settings><con:setting id="com.eviware.soapui.impl.wsdl.WsdlRequest@request-headers">&lt;xml-fragment/></con:setting></con:settings><con:endpoint>http://srvintegracaotst.ep.petrobras.com.br</con:endpoint><con:request>{
+	"id":"59c6d51e-5793-4969-9fce-1e6334b3ff15",
+	"openbusProtocol":"v0_9",
+	"duration":"3.814697265625e-05",
+	"interfaceName":"IDL:Hello:1.0",
+	"userName":"UserBoss",
+	"timestamp":"2017-11-14 19:32:42.456",
+	"output":"djEgPSB7CglbIm4iXSA9IDAsCn0KcmV0dXJuIHYxCgA=",
+	"ipOrigin":"127.0.0.1:38581",
+	"input":"djEgPSB7CglbIm4iXSA9IDEsCglbMV0gPSAibWVzc2FnZTgiLAp9CnJldHVybiB2MQoA",
+	"resultCode":"true",
+	"solutionCode":"BEEP",
+	"loginId":"59c6d51e-5793-4969-9fce-1e6334b3ff15",
+	"actioName":"sayhello",
+	"environment":"TST"
+}</con:request><con:originalUri>http://srvintegracaotst.ep.petrobras.com.br/audit-service/api/publish</con:originalUri><con:credentials><con:username>saubeep</con:username><con:password>o15Nxvvo</con:password><con:selectedAuthProfile>Basic</con:selectedAuthProfile><con:addedBasicAuthenticationTypes>Basic</con:addedBasicAuthenticationTypes><con:authType>Global HTTP Settings</con:authType></con:credentials><con:jmsConfig JMSDeliveryMode="PERSISTENT"/><con:jmsPropertyConfig/><con:parameters/><con:parameterOrder/></con:request></con:method></con:resource></con:interface><con:properties/><con:wssContainer/><con:oAuth2ProfileContainer/><con:oAuth1ProfileContainer/></con:soapui-project>
