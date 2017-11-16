@@ -22,7 +22,7 @@ local newtcp = socket.tcp
 
 local url = require "socket.url"
 local http = require "socket.http"
-local httpreq = http.request
+local httprequest = http.request
 http.TIMEOUT = 15 -- seconds
 
 local ltn12 = require "ltn12"
@@ -33,7 +33,7 @@ local uuid = require "uuid"
 
 local oil = require "oil"
 
-local serializer = require "loop.serial.StringStream"
+local stringstream = require "loop.serial.StringStream"
 local base64 = require "base64"
 
 local oo = require "openbus.util.oo"
@@ -41,17 +41,17 @@ local log = require "openbus.util.logger"
 local setuplog = require("openbus.util.server").setuplog
 local msg = require "openbus.core.messages"
 
-function httpconnection(endpoint, location)
+function httpconnect(endpoint, location)
   local parsed = url.parse(endpoint)
   local sock = newtcp()
   sock:connect(parsed.host, parsed.port)
   local url = endpoint..( location or "" )
   
   return 
-  function(request)
+  function (request)
     local threadid = tostring(running())
     local body = {}
-    local ok, code, headers, status = httpreq{
+    local ok, code, headers, status = httprequest{
       url = url,
       connection = sock,
       create = newtcp,
@@ -111,8 +111,7 @@ function fifo:push(event)
 end
 
 -- consumer
--- local httpfactory = function() return httpconnection("http://localhost:51400", "/") end
-local httpfactory = function() return httpconnection("http://localhost:51398", "/") end
+local httpfactory = function() return httpconnect("http://localhost:51398", "/") end
 local httppost = httpfactory()
 
 function consumer:reschedule()
@@ -131,6 +130,12 @@ local function dateformat(timestamp)
   return date("%Y-%m-%d %H:%M:%S.", math.modf(timestamp))..mili
 end
 
+local function serialize(data)
+  local stream = stringstream()
+  stream:put(data)
+  return base64.encode(stream:__tostring())
+end
+
 local function jsonstringfy(event)
   if type(event.interfaceName) ~= "string" then
     event.interfaceName = tostring(event.interfaceName)
@@ -143,14 +148,29 @@ local function jsonstringfy(event)
     event.timestamp = dateformat(event.timestamp) -- date format stringfy
   end
   if type(event.input) ~= "string" then
-    local stream = serializer()
-    stream:put(event.input)
-    event.input = base64.encode(stream:__tostring())
+    if #event.input > 0 then
+      event.input = serialize(event.input)
+    else
+      event.input = "null"
+    end
   end
   if type(event.output) ~= "string" then
-    local stream = serializer()
-    stream:put(event.output)
-    event.output = base64.encode(stream:__tostring())
+    if #event.output > 0 then
+      if event.resultCode == false then
+        local exception = {} -- avoids to serialize OiL exception metatables
+        for k,v in pairs(event.output[1]) do
+          exception[k] = v
+        end
+        event.output = exception
+      end
+      event.output = serialize(event.output)
+    else
+      event.output = "null"
+    end
+
+  end
+  if type(event.resultCode) ~= "string" then
+    event.resultCode = tostring(event.resultCode)
   end
 
   local result = {}
@@ -178,7 +198,6 @@ function consumer:init()
           local datatype = type(data)
           if datatype == "table" or datatype == "string" then
             local json = (datatype == "table" and jsonstringfy(data)) or data
-            -- local ok, result = pcall(httppost, '[{"body":"'..json..'"}]')
             local ok, result = pcall(httppost, json)
             if not ok then
               local exception = result[1]
@@ -194,7 +213,6 @@ function consumer:init()
           end
           cothread.last()
         end
-        print("memory in use:", collectgarbage("count"))
       end
     end)
     waiting[i] = false
@@ -205,17 +223,17 @@ end
 
 -- corba interceptor
 
-local NullValue = "<EMPTY>"
+local NullValue = "null"
 local UnknownUser = "UNKNOWN_USER"
 
-local interceptor = {audit={}, fifo=fifo}
+local interceptor = {audit=setmetatable({},{__mode = "k"}), fifo=fifo}
 function interceptor:receiverequest(request)
   local id = uuid.new()
   local thread = running()
   self.audit[thread] = {
     id = id,
     solutionCode = "BEEP",
-    actioName = request.operation_name,
+    actionName = request.operation_name,
     timestamp = cothread.now(),
     userName = "UserBoss",
     input = request.parameters or NullValue,
@@ -233,7 +251,7 @@ function interceptor:sendreply(request)
     local event = self.audit[thread]
     self.audit[thread] = nil
     event.duration = (cothread.now() - event.timestamp) * 1000 -- duration (ms)
-    event.resultCode = tostring(request.success)
+    event.resultCode = request.success
     event.output = request.results or NullValue
     self.fifo:push(event)
   end
@@ -247,15 +265,23 @@ local orb = oil.init({port=2266, flavor="cooperative;corba.intercepted"})
 
 orb:loadidl[[
 interface Hello {
-  void sayhello(in string msg);
+  exception AnError { string mymsg; };
+  void sayhello(in string msg) raises (AnError);
 };
 ]]
 orb:setinterceptor(interceptor, "corba.server")
 
-orb:newservant(
-  {sayhello = function(self, msg)
+local servant = {
+  sayhello = function(self, msg)
     print("server receive a message:",msg)
-  end},
+    if msg == "except" then
+      error(orb:newexcept{"IDL:Hello/AnError:1.0", mymsg="some context related"})
+    end
+  end
+}
+
+orb:newservant(
+  servant,
   "Hello",
   "IDL:Hello:1.0");
 

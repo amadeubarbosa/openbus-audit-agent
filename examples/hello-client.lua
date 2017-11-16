@@ -4,7 +4,8 @@ local orb = oil.init()
 
 orb:loadidl[[
 interface Hello {
-	void sayhello(in string msg);
+  exception AnError { string mymsg; };
+  void sayhello(in string msg) raises (AnError);
 };
 ]]
 local max = maxrequests or 10000
@@ -26,7 +27,8 @@ for i=1,max do
 end
 
 if mode == "async" then
-	for i=1,max do
+	hello.futures[#hello.futures+1] = hello:sayhello("except")
+	for i=1,#hello.futures do
 		hello.futures[i]:results()
 	end
 end
