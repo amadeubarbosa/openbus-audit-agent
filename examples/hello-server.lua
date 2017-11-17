@@ -9,9 +9,14 @@ interface Hello {
 ]]
 
 orb:newservant(
-	{
-		sayhello = function(self, msg) print(msg) end,
- 	},
-	"Hello", "IDL:Hello:1.0");
+  {
+    sayhello = function(self, msg)
+      print(msg)
+      if msg == "except" then
+        error(orb:newexcept{"IDL:Hello/AnError:1.0", mymsg="some context related"})
+      end
+    end,
+  },
+  "Hello", "IDL:Hello:1.0");
 
 orb:run()

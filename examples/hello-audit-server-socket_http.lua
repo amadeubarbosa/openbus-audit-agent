@@ -172,6 +172,9 @@ local function jsonstringfy(event)
   if type(event.resultCode) ~= "string" then
     event.resultCode = tostring(event.resultCode)
   end
+  if type(event.duration) ~= "string" then
+    event.duration = string.format("%.4f", event.duration)
+  end
 
   local result = {}
   for k,v in pairs(event) do
