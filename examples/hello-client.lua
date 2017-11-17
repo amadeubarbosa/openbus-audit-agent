@@ -34,4 +34,7 @@ if mode == "async" then
 end
 local finish = oil.time()
 print(string.format("client finished, mode = %s max = %d, duration = %0.2f", mode or "sync", max, finish - start))
+
+hello:sayhello("shutdown")
+
 orb:shutdown()
