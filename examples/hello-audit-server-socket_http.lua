@@ -3,13 +3,14 @@
 -- FIXME: 
 --   [ ] audit interceptor should be inject in busservices
 --   [ ] audit event mapping should be configurable (request, caller) -> (audit event class)
---   [ ] must serialize on disk/sqlite when shutding down ?
---   [ ] must serialize under cache overflow ?
+--   [ ] should serialize on disk/sqlite when shutding down ?
+--   [ ] should serialize under cache overflow ?
 
 local _G = require "_G"
 local pairs = _G.pairs
 local assert = _G.assert
 local tostring = _G.tostring
+local package = _G.package
 
 local date = require "os".date
 local table = require "table"
@@ -138,6 +139,7 @@ end
 
 local function serialize(data)
   local stream = stringstream()
+  stream:register(package.loaded)
   stream:put(data)
   return b64encode(stream:__tostring())
 end
@@ -166,13 +168,6 @@ local function jsonstringfy(event)
   end
   if type(event.output) ~= "string" then
     if #event.output > 0 then
-      if event.resultCode == false then
-        local exception = {} -- avoids to serialize OiL exception metatables
-        for k,v in pairs(event.output[1]) do
-          exception[k] = v
-        end
-        event.output = exception
-      end
       event.output = serialize(event.output)
     else
       event.output = NullValue
