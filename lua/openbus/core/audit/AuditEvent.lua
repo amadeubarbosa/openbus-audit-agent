@@ -1,3 +1,6 @@
+local _G = require "_G"
+local package = _G.package
+
 local table = require "table"
 local date = require("os").date
 local newuuid = require("uuid").new
@@ -90,6 +93,7 @@ end
 function AuditEvent:format()
   local datepattern = self.config.dateformat
   local milipattern = self.config.miliformat
+  local nullvalue = self.config.nullvalue
   local data = self.data
 
   if type(data.timestamp) ~= "string" then
@@ -105,10 +109,11 @@ function AuditEvent:format()
     data.ipOrigin = string.format("%s:%d", assert(address.host), assert(address.port))
   end
   if type(data.input) ~= "string" then
-    data.input = stringfyparams(data.input)
+    data.input = stringfyparams(data.input, nullvalue)
   end
   if type(data.output) ~= "string" then
-    data.output = stringfyparams(data.output)
+    data.output = stringfyparams(data.output, nullvalue)
+    print(data.output)
   end
   if type(data.resultCode) ~= "string" then
     data.resultCode = tostring(data.resultCode)

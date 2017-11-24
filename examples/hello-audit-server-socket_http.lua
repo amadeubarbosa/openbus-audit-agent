@@ -2,7 +2,7 @@
 -- 
 -- FIXME: 
 --   [ ] audit interceptor should be inject in busservices
---   [ ] audit event mapping should be configurable (request, caller) -> (audit event class)
+--   [x] audit event mapping should be configurable (request, caller) -> (audit event class)
 --   [ ] should serialize on disk/sqlite when shutding down ?
 --   [ ] should serialize under cache overflow ?
 
@@ -12,10 +12,8 @@ local assert = _G.assert
 local tostring = _G.tostring
 local package = _G.package
 
-local date = require "os".date
 local table = require "table"
 local concat = table.concat
-local insert = table.insert
 
 local string = require "string"
 local coroutine = require "coroutine"
@@ -37,17 +35,15 @@ local ltn12 = require "ltn12"
 local strsrc = ltn12.source.string
 local tabsnk = ltn12.sink.table
 
-local uuid = require "uuid"
-
 local oil = require "oil"
-
-local stringstream = require "loop.serial.StringStream"
-local b64encode = require("base64").encode
+local newuuid = require("uuid").new
 
 local oo = require "openbus.util.oo"
 local log = require "openbus.util.logger"
 local setuplog = require("openbus.util.server").setuplog
 local msg = require "openbus.core.messages"
+
+local AuditEvent = require "openbus.core.audit.AuditEvent"
 
 function httpconnect(endpoint, location)
   local parsed = url.parse(endpoint)
@@ -132,62 +128,6 @@ end
 local httpfactory = function() return httpconnect("http://localhost:51398", "/") end
 local httppost = httpfactory()
 
-local function dateformat(timestamp)
-  local mili = string.format("%.3f", timestamp):match("%.(%d%d%d)")
-  return date("%Y-%m-%d %H:%M:%S.", math.modf(timestamp))..mili
-end
-
-local function serialize(data)
-  local stream = stringstream()
-  stream:register(package.loaded)
-  stream:put(data)
-  return b64encode(stream:__tostring())
-end
-
--- serialization convention
-local NullValue = "<EMPTY>"
-local UnknownUser = "UNKNOWN_USER"
-
-local function jsonstringfy(event)
-  if type(event.interfaceName) ~= "string" then
-    event.interfaceName = tostring(event.interfaceName)
-  end
-  if type(event.ipOrigin) ~= "string" then
-    local address = event.ipOrigin
-    event.ipOrigin = string.format("%s:%d", assert(address.host), assert(address.port))
-  end
-  if type(event.timestamp) == "number" then
-    event.timestamp = dateformat(event.timestamp) -- date format stringfy
-  end
-  if type(event.input) ~= "string" then
-    if #event.input > 0 then
-      event.input = serialize(event.input)
-    else
-      event.input = NullValue
-    end
-  end
-  if type(event.output) ~= "string" then
-    if #event.output > 0 then
-      event.output = serialize(event.output)
-    else
-      event.output = NullValue
-    end
-
-  end
-  if type(event.resultCode) ~= "string" then
-    event.resultCode = tostring(event.resultCode)
-  end
-  if type(event.duration) ~= "string" then
-    event.duration = string.format("%.4f", event.duration)
-  end
-
-  local result = {}
-  for k,v in pairs(event) do
-    insert(result, string.format("%q:%q", k,v))
-  end
-  return "{"..concat(result, ",").."}"
-end
-
 function consumer:init()
   local retrytimeout = self._retrytimeout
   local waitfor = socket.sleep
@@ -202,22 +142,17 @@ function consumer:init()
           waiting[i] = true
           cothread.suspend()
         else -- pop
-          local data = fifo:pop()
-          local datatype = type(data)
-          if datatype == "table" or datatype == "string" then
-            local json = (datatype == "table" and jsonstringfy(data)) or data
-            local ok, result = pcall(httppost, json)
-            if not ok then
-              local exception = result[1]
-              -- prevent IO-bound task when service is offline
-              waitfor(retrytimeout)
-              -- recreate the connection and try again
-              httppost = httpfactory()
-              fifo:push(json)
-              log:exception(msg.AuditAgentReconnecting:tag{error=exception, agent=threadid, request=json})
-            end
-          else
-            log:exception(msg.AuditAgentDiscardedUnsupportedData:tag{datatype=datatype, data=data})
+          local event = fifo:pop()
+          local json = event:json()
+          local ok, result = pcall(httppost, json)
+          if not ok then
+            local exception = result[1]
+            -- prevent IO-bound task when service is offline
+            waitfor(retrytimeout)
+            -- recreate the connection and try again
+            httppost = httpfactory()
+            fifo:push(event)
+            log:exception(msg.AuditAgentReconnecting:tag{error=exception, agent=threadid, request=json})
           end
           cothread.last()
         end
@@ -277,35 +212,25 @@ function consumer:shutdown()
 end
 
 -- corba interceptor
+AuditEvent.config = {
+  application = "BEEP",
+  instance = "TST",
+}
 
 local interceptor = {audit=setmetatable({},{__mode = "k"}), fifo=fifo}
 function interceptor:receiverequest(request)
-  local id = uuid.new()
-  local thread = running()
-  self.audit[thread] = {
-    id = id,
-    solutionCode = "BEEP",
-    actionName = request.operation_name,
-    timestamp = cothread.now(),
-    userName = "UserBoss",
-    input = request.parameters or NullValue,
-    environment = "TST",
-    openbusProtocol = "v0_9",
-    interfaceName = request.interface.repID,
-    ipOrigin = request.channel_address,
-    loginId = id,
-  }
+  local event = AuditEvent()
+  event:collect("request", request, {caller={entity="UserBoss", id=newuuid()}})
+  self.audit[running()] = event
 end
 
 function interceptor:sendreply(request)
   local thread = running()
-  if self.audit[thread] ~= nil then
-    local event = self.audit[thread]
-    self.audit[thread] = nil
-    event.duration = (cothread.now() - event.timestamp) * 1000 -- duration (ms)
-    event.resultCode = request.success
-    event.output = request.results or NullValue
+  local event = self.audit[thread]
+  if event ~= nil then
+    event:collect("reply", request)
     self.fifo:push(event)
+    self.audit[thread] = nil
   end
 end
 
