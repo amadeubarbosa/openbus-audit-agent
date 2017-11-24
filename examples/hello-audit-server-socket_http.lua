@@ -20,64 +20,25 @@ local coroutine = require "coroutine"
 local running = coroutine.running
 local status = coroutine.status
 local newthread = coroutine.create
+
 local cothread = require "cothread"
 local schedule = cothread.schedule
 local unschedule = cothread.unschedule
+
 cothread.plugin(require "cothread.plugin.socket")
-local socket = require "cothread.socket"
-local newtcp = socket.tcp
-
-local url = require "socket.url"
-local http = require "socket.http"
-local httprequest = http.request
-
-local ltn12 = require "ltn12"
-local strsrc = ltn12.source.string
-local tabsnk = ltn12.sink.table
+local waitfor = require("cothread.socket").sleep
 
 local oil = require "oil"
 local newuuid = require("uuid").new
 
-local oo = require "openbus.util.oo"
 local log = require "openbus.util.logger"
 local setuplog = require("openbus.util.server").setuplog
 local msg = require "openbus.core.messages"
 
 local AuditEvent = require "openbus.core.audit.AuditEvent"
 
-function httpconnect(endpoint, location)
-  local parsed = url.parse(endpoint)
-  local sock = newtcp()
-  sock:connect(parsed.host, parsed.port)
-  local url = endpoint..( location or "" )
-  
-  return 
-  function (request)
-    local threadid = tostring(running())
-    local body = {}
-    local ok, code, headers, status = httprequest{
-      url = url,
-      connection = sock,
-      create = newtcp,
-      source = strsrc(request),
-      sink = tabsnk(body),
-      headers = {
-        ["content-length"] = #request,
-        ["content-type"] = "application/json;charset=utf-8",
-        ["accept"] = "application/json",
-        ["connection"] = "keep-alive",
-      },
-      method = "POST",
-    }
-    if not ok or (tonumber(code) ~= 200 and tonumber(code) ~= 201) then
-      -- using error almost like an exception
-      error{msg.HttpPostFailed:tag{url=url, request=request, agent=threadid, code=code, status=status, body=concat(body)}}
-    else
-      log:action(msg.HttpPostSuccessfullySent:tag{url=url, request=request, agent=threadid})
-      return body
-    end
-  end
-end
+local http = require("openbus.util.http")
+local httpconnect = http.connect
 
 setuplog(log, 5)
 
@@ -125,12 +86,14 @@ function fifo:count()
 end
 
 -- consumer
-local httpfactory = function() return httpconnect("http://localhost:51398", "/") end
-local httppost = httpfactory()
+local function newconnection()
+  return http.connect("http://localhost:51398", "/")
+end
+
+local httppost = newconnection()
 
 function consumer:init()
   local retrytimeout = self._retrytimeout
-  local waitfor = socket.sleep
   local waiting = self._waiting
   local threads = self._threads
   for i=1, self._maxclients do
@@ -150,7 +113,7 @@ function consumer:init()
             -- prevent IO-bound task when service is offline
             waitfor(retrytimeout)
             -- recreate the connection and try again
-            httppost = httpfactory()
+            httppost = newconnection()
             fifo:push(event)
             log:exception(msg.AuditAgentReconnecting:tag{error=exception, agent=threadid, request=json})
           end
@@ -204,7 +167,7 @@ function consumer:shutdown()
         if haspending then -- only for verbose
           log:print(msg.AuditAgentIsWaitingForPendingThreads:tag{threads=count})
         end
-        socket.sleep(.5)
+        waitfor(.5)
       until (haspending == false)
     end
     log:uptime(msg.AuditAgentShutdownCompleted)

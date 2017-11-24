@@ -113,7 +113,6 @@ function AuditEvent:format()
   end
   if type(data.output) ~= "string" then
     data.output = stringfyparams(data.output, nullvalue)
-    print(data.output)
   end
   if type(data.resultCode) ~= "string" then
     data.resultCode = tostring(data.resultCode)
