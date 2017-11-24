@@ -29,23 +29,26 @@ local class = require("openbus.util.oo").class
 --     output,
 --     resultCode,
 -- }
+--
 
-local AuditEvent = class{
-  config={
-    application = "OPENBUS",
-    instance = newuuid(),
-    nullvalue = "null",
-    unknownuser = "<unknown>",
-    dateformat = "%Y-%m-%d %H:%M:%S",
-    miliformat = "%.4f",
-  }
+local default = {
+  application = "OPENBUS",
+  instance = newuuid(),
+  nullvalue = "null",
+  unknownuser = "<unknown>",
+  dateformat = "%Y-%m-%d %H:%M:%S",
+  miliformat = "%.4f",
 }
 
+local AuditEvent = class{}
+
 function AuditEvent:__init()
+  local config = class(self.config or {}, default)
   self.data = {
-    solutionCode = self.config.application,
-    environment = self.config.instance,
+    solutionCode = config.application,
+    environment = config.instance,
   }
+  self.config = config
 end
 
 function AuditEvent:collect(phase, request, callerchain)

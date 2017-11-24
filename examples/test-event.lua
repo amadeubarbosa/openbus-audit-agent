@@ -1,5 +1,7 @@
 local AuditEvent = require "examples.AuditEvent"
 
+AuditEvent.config = {instance="PRD", application="BEEP"}
+
 local event = AuditEvent()
 
 local repID = {"IDL:openbus/v2_0/Hello:1.0"}
