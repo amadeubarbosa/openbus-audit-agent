@@ -1,8 +1,10 @@
 local _G = require "_G"
-local tostring = _G.tostring
+local error = _G.error
 local tonumber = _G.tonumber
+local tostring = _G.tostring
 
 local table = require "table"
+local concat = table.concat
 local unpack = table.unpack
 
 local coroutine = require "coroutine"
@@ -14,6 +16,7 @@ local socket = require "cothread.socket"
 local newtcp = socket.tcp
 
 local url = require "socket.url"
+local parseurl = url.parse
 local http = require "socket.http"
 
 local ltn12 = require "ltn12"
@@ -28,7 +31,7 @@ local http = class({}, http)
 local httprequest = http.request
 
 function http.connect(endpoint, location)
-  local parsed = url.parse(endpoint)
+  local parsed = parseurl(endpoint)
   local sock = newtcp()
   sock:connect(parsed.host, parsed.port)
   local url = endpoint..( location or "" )
@@ -52,10 +55,11 @@ function http.connect(endpoint, location)
       method = "POST",
     }
     if not ok or (tonumber(code) ~= 200 and tonumber(code) ~= 201) then
+      local body = concat(body or {})
       -- using error almost like an exception
-      error{msg.HttpPostFailed:tag{url=url, request=request, agent=threadid, code=code, status=status, body=concat(body)}}
+      error{msg.HttpPostFailed:tag{url=url, request=request, thread=threadid, code=code, status=status, body=body}}
     else
-      log:action(msg.HttpPostSuccessfullySent:tag{url=url, request=request, agent=threadid})
+      log:action(msg.HttpPostSuccessfullySent:tag{url=url, request=request, thread=threadid})
       return body
     end
   end

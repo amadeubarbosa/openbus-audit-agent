@@ -7,26 +7,12 @@
 --   [ ] should serialize under cache overflow ?
 
 local _G = require "_G"
-local pairs = _G.pairs
-local assert = _G.assert
-local tostring = _G.tostring
-local package = _G.package
+local error = _G.error
+local print = _G.print
+local setmetatable = _G.setmetatable
 
-local table = require "table"
-local concat = table.concat
-
-local string = require "string"
 local coroutine = require "coroutine"
 local running = coroutine.running
-local status = coroutine.status
-local newthread = coroutine.create
-
-local cothread = require "cothread"
-local schedule = cothread.schedule
-local unschedule = cothread.unschedule
-
-cothread.plugin(require "cothread.plugin.socket")
-local waitfor = require("cothread.socket").sleep
 
 local oil = require "oil"
 local newuuid = require("uuid").new
@@ -35,152 +21,22 @@ local log = require "openbus.util.logger"
 local setuplog = require("openbus.util.server").setuplog
 local msg = require "openbus.core.messages"
 
-local AuditEvent = require "openbus.core.audit.AuditEvent"
-
-local http = require("openbus.util.http")
-local httpconnect = http.connect
+local AuditEvent = require "openbus.core.audit.Event"
+local AuditAgent = require "openbus.core.audit.Agent"
 
 setuplog(log, 5)
 
-http.TIMEOUT = 5 -- seconds
---[[
-http.PROXY = http://localhost:3128 -- proxy settings
-]]
-
-local consumer = { -- forward declaration
-  _threads = {}, -- cothreads
-  _waiting = {}, -- critical regions
-  _maxclients = 5, -- max cothreads using fifo
-  _retrytimeout = 1, -- seconds to wait before retry http post
-  _discardonexit = false, -- option to discard events when shuts down
-}
-
-local fifo = {
-  _first = 1,
-  _last = 1,
-}
-
-function fifo:empty()
-  return self[self._last] == nil
-end
-
-function fifo:pop()
-  local event = self[self._last]
-  if event ~= nil then
-    self[self._last] = nil
-    self._last = self._last + 1
-  end
-  return event
-end
-
-function fifo:push(event)
-  if (event ~= nil) then
-    self[self._first] = event
-    self._first = self._first + 1
-    consumer:reschedule()
-  end
-end
-
-function fifo:count()
-  return self._first - self._last
-end
-
--- consumer
-local function newconnection()
-  return http.connect("http://localhost:51398", "/")
-end
-
-local httppost = newconnection()
-
-function consumer:init()
-  local retrytimeout = self._retrytimeout
-  local waiting = self._waiting
-  local threads = self._threads
-  for i=1, self._maxclients do
-    local agent = newthread(function()
-      local threadid = tostring(running())
-      while true do
-        if fifo:empty() then -- wait
-          log:action(msg.AuditAgentIsWaitingForData:tag{agent=threadid})
-          waiting[i] = true
-          cothread.suspend()
-        else -- pop
-          local event = fifo:pop()
-          local json = event:json()
-          local ok, result = pcall(httppost, json)
-          if not ok then
-            local exception = result[1]
-            -- prevent IO-bound task when service is offline
-            waitfor(retrytimeout)
-            -- recreate the connection and try again
-            httppost = newconnection()
-            fifo:push(event)
-            log:exception(msg.AuditAgentReconnecting:tag{error=exception, agent=threadid, request=json})
-          end
-          cothread.last()
-        end
-      end
-    end)
-    waiting[i] = false
-    threads[i] = agent
-    cothread.schedule(agent, "last")
-  end
-end
-
-function consumer:reschedule()
-  local threads = self._threads
-  local waiting = self._waiting
-  for i=1, #threads do
-    if (waiting[i] == true) then
-      waiting[i] = false
-      cothread.schedule(threads[i], "last") -- wake up
-    end
-  end
-end
-
-function consumer:haspending()
-  local running = 0
-  local waiting = self._waiting
-  for _, suspended in ipairs(waiting) do
-    if suspended == false then
-      running = running + 1
-    end
-  end
-  return (running ~= 0), running
-end
-
-function consumer:unschedule()
-  for i, thread in ipairs(self._threads) do
-    cothread.unschedule(thread)
-  end
-end
-
-function consumer:shutdown()
-  cothread.schedule(newthread(function()
-    if self._discardonexit then
-      local _, threads = consumer:haspending()
-      log:exception(msg.AuditAgentDiscardedDataOnShutdown:tag{discarded=fifo:count(), pendingthreads=threads})
-      consumer:unschedule() -- just remove all threads from scheduler
-    else
-      repeat
-        local haspending, count = consumer:haspending()
-        if haspending then -- only for verbose
-          log:print(msg.AuditAgentIsWaitingForPendingThreads:tag{threads=count})
-        end
-        waitfor(.5)
-      until (haspending == false)
-    end
-    log:uptime(msg.AuditAgentShutdownCompleted)
-  end), "last")
-end
-
--- corba interceptor
+-- configuration
 AuditEvent.config = {
   application = "BEEP",
   instance = "TST",
 }
 
-local interceptor = {audit=setmetatable({},{__mode = "k"}), fifo=fifo}
+-- main
+
+local agent = AuditAgent{_endpoint = "http://localhost:51398/"}
+
+local interceptor = {audit=setmetatable({},{__mode = "k"})}
 function interceptor:receiverequest(request)
   local event = AuditEvent()
   event:collect("request", request, {caller={entity="UserBoss", id=newuuid()}})
@@ -192,14 +48,10 @@ function interceptor:sendreply(request)
   local event = self.audit[thread]
   if event ~= nil then
     event:collect("reply", request)
-    self.fifo:push(event)
+    agent:publish(event)
     self.audit[thread] = nil
   end
 end
-
--- main
-
-consumer:init()
 
 local orb = oil.init({port=2266, flavor="cooperative;corba.intercepted"})
 
@@ -214,7 +66,7 @@ orb:setinterceptor(interceptor, "corba.server")
 
 local function shutdownhook(orb)
   orb:shutdown(true)
-  consumer:shutdown()
+  agent:shutdown()
 end
 
 local servant = {
