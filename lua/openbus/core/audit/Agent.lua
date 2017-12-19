@@ -22,7 +22,6 @@ local log = require "openbus.util.logger"
 local class = require("openbus.util.oo").class
 local http = require "openbus.util.http"
 http.TIMEOUT = 5 -- seconds
--- http.PROXY = "http://localhost:3128" -- proxy settings
 
 local FIFO = class {
   _head = 1,
@@ -62,27 +61,37 @@ end
 local Agent = class {
   _threads = {}, -- cothreads
   _waiting = {}, -- critical regions
-  _concurrency = 5, -- max cothreads using fifo
-  _retrytimeout = 1, -- seconds to wait before retry http post
-  _discardonexit = false, -- option to discard events when shuts down
-  _endpoint = "http://localhost:8080/", -- url of audit REST service
   _fifo = false, -- FIFO object
-  _fifolimit = 1000000, -- FIFO limit before discard events
+}
+
+local Default = {
+  concurrency = 5, -- max cothreads using fifo
+  retrytimeout = 1, -- seconds to wait before retry http post
+  discardonexit = false, -- option to discard events when shuts down
+  fifolimit = 1000000, -- FIFO limit before discard events
+  httpproxy = nil, -- http proxy settings
+  httpendpoint = "http://localhost:8080/", -- url of audit REST service
+  httpauth = nil, -- http basic authentication header
 }
 
 function Agent:__init()
+  local config = class(self.config or {}, Default)
+
   local newconnection = function()
-    return http.connect(self._endpoint)
+    http.PROXY = config.httpproxy
+    return http.connect(config.httpendpoint, nil, config.httpauth)
   end
 
   local httppost = newconnection()
   self._fifo = FIFO()
 
+  local timeout = config.retrytimeout
+  local concurrency = config.concurrency
+
   local fifo = self._fifo
-  local timeout = self._retrytimeout
   local waiting = self._waiting
   local threads = self._threads
-  for i=1, self._concurrency do
+  for i=1, concurrency do
     local agent = newthread(function()
       local threadid = tostring(running())
       while true do
@@ -115,8 +124,8 @@ function Agent:__init()
 end
 
 function Agent:publish(...)
+  local fifolimit = self.config.fifolimit
   local fifo = self._fifo
-  local fifolimit = self._fifolimit
   if fifo:count() > fifolimit then
     log:exception(msg.AuditAgentDiscardingDataAfterFifoLimitReached:tag{limit=fifolimit})
   else
@@ -152,9 +161,8 @@ end
 
 function Agent:shutdown()
   local fifo = self._fifo
-  local discardonexit = self._discardonexit
   cothread.schedule(newthread(function()
-    if discardonexit then
+    if self.config.discardonexit then
       local _, threads = self:haspending()
       log:exception(msg.AuditAgentDiscardingDataOnShutdown:tag{discarded=fifo:count(), pendingthreads=threads})
       self:unschedule() -- just remove all threads from cothread scheduler

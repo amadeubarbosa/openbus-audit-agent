@@ -30,7 +30,7 @@ local msg = require "openbus.core.messages"
 local http = class({}, http)
 local httprequest = http.request
 
-function http.connect(endpoint, location)
+function http.connect(endpoint, location, encodedauth)
   local parsed = parseurl(endpoint)
   local sock = newtcp()
   sock:connect(parsed.host, parsed.port)
@@ -47,6 +47,7 @@ function http.connect(endpoint, location)
       source = strsrc(request),
       sink = tabsnk(body),
       headers = {
+        ["authorization"] = encodedauth and "Basic "..encodedauth,
         ["content-length"] = #request,
         ["content-type"] = "application/json;charset=utf-8",
         ["accept"] = "application/json",

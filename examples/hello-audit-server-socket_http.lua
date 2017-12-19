@@ -1,10 +1,13 @@
 -- Audit Inteceptor to publish data in a HTTP REST service
 -- 
 -- FIXME: 
+--   [x] audit http authentication
 --   [ ] audit interceptor should be inject in busservices
 --   [x] audit event mapping should be configurable (request, caller) -> (audit event class)
 --   [ ] should serialize on disk/sqlite when shutding down ?
---   [ ] should serialize under cache overflow ?
+--   [i] should serialize under cache overflow ? (i: FIFO now has limits)
+--   [ ] should log entire event collected or just an ID ?
+--   [ ] should log in a new 'audit' level ?
 
 local _G = require "_G"
 local error = _G.error
@@ -16,6 +19,7 @@ local running = coroutine.running
 
 local oil = require "oil"
 local newuuid = require("uuid").new
+local b64encode = require("base64").encode
 
 local log = require "openbus.util.logger"
 local setuplog = require("openbus.util.server").setuplog
@@ -34,22 +38,29 @@ AuditEvent.config = {
 
 -- main
 
-local agent = AuditAgent{_endpoint = "http://localhost:51398/"}
+local interceptor = {
+  auditevents = setmetatable({},{__mode = "k"}),
+  agent = AuditAgent{
+    config = {
+      httpendpoint = "http://localhost:51398/",
+      httpauth = b64encode("fulano:silva"),
+    }
+  },
+}
 
-local interceptor = {audit=setmetatable({},{__mode = "k"})}
 function interceptor:receiverequest(request)
   local event = AuditEvent()
   event:incoming(request, {caller={entity="UserBoss", id=newuuid()}})
-  self.audit[running()] = event
+  self.auditevents[running()] = event
 end
 
 function interceptor:sendreply(request)
   local thread = running()
-  local event = self.audit[thread]
+  local event = self.auditevents[thread]
   if event ~= nil then
     event:outgoing(request)
-    agent:publish(event)
-    self.audit[thread] = nil
+    self.agent:publish(event)
+    self.auditevents[thread] = nil
   end
 end
 
@@ -64,9 +75,9 @@ interface Hello {
 
 orb:setinterceptor(interceptor, "corba.server")
 
-local function shutdownhook(orb)
+local function shutdownhook(self, orb)
   orb:shutdown(true)
-  agent:shutdown()
+  self.agent:shutdown()
 end
 
 local servant = {
@@ -76,7 +87,7 @@ local servant = {
       error(orb:newexcept{"IDL:Hello/AnError:1.0", mymsg="some context related"})
     end
     if msg == "shutdown" then
-      shutdownhook(orb)
+      shutdownhook(interceptor, orb)
     end
   end
 }

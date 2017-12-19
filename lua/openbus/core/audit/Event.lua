@@ -40,7 +40,7 @@ local class = require("openbus.util.oo").class
 -- }
 --
 
-local default = {
+local Default = {
   application = "OPENBUS",
   instance = newuuid(),
   nullvalue = "null",
@@ -52,7 +52,7 @@ local default = {
 local AuditEvent = class{}
 
 function AuditEvent:__init()
-  local config = class(self.config or {}, default)
+  local config = class(self.config or {}, Default)
   self.data = {
     solutionCode = config.application,
     environment = config.instance,
