@@ -39,7 +39,7 @@ local agent = AuditAgent{_endpoint = "http://localhost:51398/"}
 local interceptor = {audit=setmetatable({},{__mode = "k"})}
 function interceptor:receiverequest(request)
   local event = AuditEvent()
-  event:collect("request", request, {caller={entity="UserBoss", id=newuuid()}})
+  event:incoming(request, {caller={entity="UserBoss", id=newuuid()}})
   self.audit[running()] = event
 end
 
@@ -47,7 +47,7 @@ function interceptor:sendreply(request)
   local thread = running()
   local event = self.audit[thread]
   if event ~= nil then
-    event:collect("reply", request)
+    event:outgoing(request)
     agent:publish(event)
     self.audit[thread] = nil
   end

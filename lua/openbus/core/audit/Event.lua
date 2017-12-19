@@ -60,24 +60,25 @@ function AuditEvent:__init()
   self.config = config
 end
 
-function AuditEvent:collect(phase, request, callerchain)
+function AuditEvent:incoming(request, callerchain)
   local data = self.data
-  if phase == "request" then
-    local unknownuser = self.config.unknownuser
-    data.id = newuuid()
-    data.timestamp = gettimeofday()
-    data.actionName = request.operation_name
-    data.userName = callerchain and callerchain.caller.entity or unknownuser
-    data.input = request.parameters
-    -- optional data
-    data.interfaceName = request.interface.repID
-    data.loginId = callerchain and callerchain.caller.id or unknownuser
-    data.ipOrigin = request.channel_address
-  elseif phase == "reply" then
-    data.duration = gettimeofday() - data.timestamp
-    data.resultCode = request.success
-    data.output = request.results
-  end
+  local unknownuser = self.config.unknownuser
+  data.id = newuuid()
+  data.timestamp = gettimeofday()
+  data.actionName = request.operation_name
+  data.userName = callerchain and callerchain.caller.entity or unknownuser
+  data.input = request.parameters
+  -- optional data
+  data.interfaceName = request.interface.repID
+  data.loginId = callerchain and callerchain.caller.id or unknownuser
+  data.ipOrigin = request.channel_address
+end
+
+function AuditEvent:outgoing(request)
+  local data = self.data
+  data.duration = gettimeofday() - data.timestamp
+  data.resultCode = request.success
+  data.output = request.results
 end
 
 local function stringfyparams(params, nullvalue)
