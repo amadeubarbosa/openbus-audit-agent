@@ -13,7 +13,7 @@ local newuuid = require("uuid").new
 local cothread = require "cothread"
 cothread.plugin(require "cothread.plugin.socket")
 local gettimeofday = cothread.now
-local strstream = require "loop.serial.StringStream"
+local viewer = require "loop.debug.Viewer"
 local b64encode = require("base64").encode
 local oil = require "oil" -- package.loaded usage depends on it
 local class = require("openbus.util.oo").class
@@ -39,6 +39,11 @@ local class = require("openbus.util.oo").class
 --     resultCode,
 -- }
 --
+
+local serializer = viewer{
+  maxdepth = 3, --FIXME: object serialization could fail, skipping
+  metaonly = true,
+}
 
 local Default = {
   application = "OPENBUS",
@@ -83,10 +88,7 @@ end
 
 local function stringfyparams(params, nullvalue)
   if #params > 0 then
-    local stream = strstream()
-    stream:register(package.loaded) -- in order to serialize oil exceptions
-    stream:put(params)
-    return b64encode(stream:__tostring())
+    return b64encode(serializer:tostring(params))
   else
     return nullvalue
   end
