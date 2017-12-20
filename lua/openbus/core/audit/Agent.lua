@@ -69,17 +69,17 @@ local Default = {
   retrytimeout = 1, -- seconds to wait before retry http post
   discardonexit = false, -- option to discard events when shuts down
   fifolimit = 1000000, -- FIFO limit before discard events
-  httpproxy = nil, -- http proxy settings
+  httpproxy = false, -- http proxy settings
   httpendpoint = "http://localhost:8080/", -- url of audit REST service
-  httpauth = nil, -- http basic authentication header
+  httpcredentials = false, -- http basic authentication credentials
 }
 
 function Agent:__init()
   local config = class(self.config or {}, Default)
 
   local newconnection = function()
-    http.PROXY = config.httpproxy
-    return http.connect(config.httpendpoint, nil, config.httpauth)
+    http.setproxy(config.httpproxy)
+    return http.connect(config.httpendpoint, nil, config.httpcredentials)
   end
 
   local httppost = newconnection()
@@ -96,7 +96,6 @@ function Agent:__init()
       local threadid = tostring(running())
       while true do
         if fifo:empty() then -- wait
-          log:action(msg.AuditAgentWaitingForData:tag{agent=threadid})
           waiting[i] = true
           cothread.suspend()
         else -- pop
@@ -163,8 +162,8 @@ function Agent:shutdown()
   local fifo = self._fifo
   cothread.schedule(newthread(function()
     if self.config.discardonexit then
-      local _, threads = self:haspending()
-      log:exception(msg.AuditAgentDiscardingDataOnShutdown:tag{discarded=fifo:count(), pendingthreads=threads})
+      local _, count = self:haspending()
+      log:action(msg.AuditAgentDiscardingDataOnShutdown:tag{fifolength=fifo:count(), pendingthreads=count})
       self:unschedule() -- just remove all threads from cothread scheduler
     else
       repeat

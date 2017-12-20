@@ -1,4 +1,12 @@
--- The MIT License (MIT)
+-- This library is a derivative work under terms of MIT License:
+--   * Base64 decoding was ported back to Lua5.2 from
+--     https://svn.nmap.org/nmap/nselib/base64.lua
+--     Copyright (c) 2016 Patrick Donnelly <batrick@batbytes.com>
+--
+--   * Base64 encoding was ported back to Lua5.2 from Lua5.3 snippet at
+--     http://lua-users.org/wiki/BaseSixtyFour
+--     Copyright (c) 2014 Lua-users.org community
+--
 -- Copyright (c) 2017 Amadeu A. Barbosa Junior (amadeu@tecgraf.puc-rio.br)
 --
 -- Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -18,10 +26,6 @@
 -- LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 -- OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 -- SOFTWARE.
-
----
--- Base64 encoding was ported back to Lua5.2 from http://lua-users.org/wiki/BaseSixtyFour
--- Base64 decoding was ported back to Lua5.2 from https://svn.nmap.org/nmap/nselib/base64.lua
 
 local bit32 = require "bit32"
 local rshift = bit32.rshift

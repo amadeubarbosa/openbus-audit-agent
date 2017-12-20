@@ -43,7 +43,7 @@ local interceptor = {
   agent = AuditAgent{
     config = {
       httpendpoint = "http://localhost:51398/",
-      httpauth = b64encode("fulano:silva"),
+      httpcredentials = b64encode("fulano:silva"),
     }
   },
 }

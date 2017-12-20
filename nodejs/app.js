@@ -12,15 +12,15 @@ var auth = function (req, res, next) {
   var user = basicAuth(req);
 
   if (!user || !user.name || !user.pass) {
-    console.log("Missing authentication header");
+    console.log(req.url + " access denied. missing authentication header");
     return unauthorized(res);
   };
 
   if (user.name === 'fulano' && user.pass === 'silva') {
-    console.log("Successfully authenticated as " + user.name);
+    console.log(req.url + " access granted for user " + user.name);
     return next();
   } else {
-    console.log("Authentication failed for user "+ user.name);
+    console.log(req.url + " access denied. invalid user credentials user " + user.name);
     return unauthorized(res);
   };
 };
@@ -36,8 +36,14 @@ app.get('/test', auth, (req, res) => {
   res.end('Welcome test');
 })
 
-app.post('/', auth, (req, res) => {  
-  console.log('Received')
+app.post('/public', (req, res) => {
+  console.log('Received a public event ' + req.url)
+  console.log(req.body);
+  res.end('')
+})
+
+app.post('/', auth, (req, res) => {
+  console.log('Received a private event ' + req.url)
   console.log(req.body);
   res.end('')
 })

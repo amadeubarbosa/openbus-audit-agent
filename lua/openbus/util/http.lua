@@ -30,7 +30,7 @@ local msg = require "openbus.core.messages"
 local http = class({}, http)
 local httprequest = http.request
 
-function http.connect(endpoint, location, encodedauth)
+function http.connect(endpoint, location, credentials)
   local parsed = parseurl(endpoint)
   local sock = newtcp()
   sock:connect(parsed.host, parsed.port)
@@ -47,7 +47,7 @@ function http.connect(endpoint, location, encodedauth)
       source = strsrc(request),
       sink = tabsnk(body),
       headers = {
-        ["authorization"] = encodedauth and "Basic "..encodedauth,
+        ["authorization"] = (credentials and "Basic "..credentials) or nil,
         ["content-length"] = #request,
         ["content-type"] = "application/json;charset=utf-8",
         ["accept"] = "application/json",
@@ -60,10 +60,13 @@ function http.connect(endpoint, location, encodedauth)
       -- using error almost like an exception
       error{msg.HttpPostFailed:tag{url=url, request=request, thread=threadid, code=code, status=status, body=body}}
     else
-      log:action(msg.HttpPostSuccessfullySent:tag{url=url, request=request, thread=threadid})
       return body
     end
   end
+end
+
+function http.setproxy(proxyurl)
+  http.PROXY = proxyurl or nil
 end
 
 return http
