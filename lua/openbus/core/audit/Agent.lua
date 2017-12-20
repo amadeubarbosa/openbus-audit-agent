@@ -100,6 +100,7 @@ function Agent:__init()
           cothread.suspend()
         else -- pop
           local event = fifo:pop()
+          local requestid = event.id
           local json = event:json()
           local ok, result = pcall(httppost, json)
           if not ok then
@@ -109,7 +110,7 @@ function Agent:__init()
             -- recreate the connection and try again
             httppost = newconnection()
             fifo:push(event)
-            log:exception(msg.AuditAgentReconnecting:tag{error=exception or result, agent=threadid, request=json})
+            log:exception(msg.AuditAgentReconnecting:tag{error=exception or result, agent=threadid, request=requestid})
           end
           cothread.last()
         end

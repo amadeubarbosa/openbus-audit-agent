@@ -61,14 +61,15 @@ function AuditEvent:__init()
   self.data = {
     solutionCode = config.application,
     environment = config.instance,
+    id = newuuid(),
   }
   self.config = config
+  self.id = self.data.id
 end
 
 function AuditEvent:incoming(request, callerchain)
   local data = self.data
   local unknownuser = self.config.unknownuser
-  data.id = newuuid()
   data.timestamp = gettimeofday()
   data.actionName = request.operation_name
   data.userName = callerchain and callerchain.caller.entity or unknownuser
