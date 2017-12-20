@@ -33,7 +33,7 @@ local httprequest = http.request
 function http.connect(endpoint, location, credentials)
   local parsed = parseurl(endpoint)
   local sock = newtcp()
-  sock:connect(parsed.host, parsed.port)
+  sock:connect(parsed.host, parsed.port or http.PORT)
   local url = endpoint..( location or "" )
   
   return 
