@@ -58,7 +58,7 @@ function http.connect(endpoint, location, credentials)
     if not ok or (tonumber(code) ~= 200 and tonumber(code) ~= 201) then
       local body = concat(body or {})
       -- using error almost like an exception
-      error{msg.HttpPostFailed:tag{url=url, request=request, thread=threadid, code=code, status=status, body=body}}
+      error{msg.HttpPostFailed:tag{url=url, thread=threadid, code=code, status=status, body=body}}
     else
       return body
     end
