@@ -70,12 +70,18 @@ end
 function AuditEvent:incoming(request, callerchain)
   local data = self.data
   local unknownuser = self.config.unknownuser
+  local nullvalue = self.config.nullvalue
   data.timestamp = gettimeofday()
   data.actionName = request.operation_name
   data.userName = callerchain and callerchain.caller.entity or unknownuser
   data.input = request.parameters
   -- optional data
-  data.interfaceName = request.interface.repID
+  if callerchain then
+    data.openbusProtocol = (callerchain.islegacy and "v2_0") or "v2_1"
+  else
+    data.openbusProtocol = nullvalue
+  end
+  data.interfaceName = request.interface and request.interface.repID or nullvalue
   data.loginId = callerchain and callerchain.caller.id or unknownuser
   data.ipOrigin = request.channel_address
 end
@@ -111,8 +117,6 @@ function AuditEvent:format()
   end
   if type(data.interfaceName) ~= "string" then
     data.interfaceName = tostring(data.interfaceName)
-    -- optional data
-    data.openbusProtocol = data.interfaceName:match("%/(v[%d%_]+)%/")
   end
   if type(data.ipOrigin) ~= "string" then
     local address = data.ipOrigin
