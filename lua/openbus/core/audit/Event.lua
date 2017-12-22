@@ -94,7 +94,7 @@ function AuditEvent:outgoing(request)
 end
 
 local function stringfyparams(params, nullvalue)
-  if #params > 0 then
+  if params and #params > 0 then
     return b64encode(serializer:tostring(params))
   else
     return nullvalue
