@@ -120,7 +120,7 @@ function AuditEvent:format()
   end
   if type(data.ipOrigin) ~= "string" then
     local address = data.ipOrigin
-    data.ipOrigin = string.format("%s:%d", assert(address.host), assert(address.port))
+    data.ipOrigin = address and string.format("%s:%d", assert(address.host), assert(address.port)) or nullvalue
   end
   if type(data.input) ~= "string" then
     data.input = stringfyparams(data.input, nullvalue)
