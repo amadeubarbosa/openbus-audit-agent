@@ -32,12 +32,19 @@ local httprequest = http.request
 
 function http.connect(endpoint, location, credentials)
   local parsed = parseurl(endpoint)
-  local sock = newtcp()
-  sock:connect(parsed.host, parsed.port or http.PORT)
   local url = endpoint..( location or "" )
+  local sock = newtcp()
+  if sock ~= nil then
+    local ok, errmsg = sock:connect(parsed.host, parsed.port or http.PORT)
+    if not ok then
+      log:exception(msg.HttpConnectFailed:tag{url=url, errmsg=errmsg})
+    end
+  else
+    log:exception(msg.HttpConnectFailed:tag{url=url, errmsg="failed to create a new socket"})
+  end
   
   return 
-  function (request)
+  function (request, method, mimetype)
     local threadid = tostring(running())
     local body = {}
     local ok, code, headers, status = httprequest{
@@ -49,11 +56,11 @@ function http.connect(endpoint, location, credentials)
       headers = {
         ["authorization"] = (credentials and "Basic "..credentials) or nil,
         ["content-length"] = #request,
-        ["content-type"] = "application/json;charset=utf-8",
-        ["accept"] = "application/json",
+        ["content-type"] = mimetype or "application/json;charset=utf-8",
+        ["accept"] = mimetype or "application/json",
         ["connection"] = "keep-alive",
       },
-      method = "POST",
+      method = method or "POST",
     }
     if not ok or (tonumber(code) ~= 200 and tonumber(code) ~= 201) then
       local body = concat(body or {})
