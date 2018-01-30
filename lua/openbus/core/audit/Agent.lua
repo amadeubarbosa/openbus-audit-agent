@@ -77,12 +77,12 @@ local Default = {
 function Agent:__init()
   local config = class(self.config or {}, Default)
 
-  local newconnection = function()
+  local newrequester = function()
     http.setproxy(config.httpproxy)
     return http.connect(config.httpendpoint, nil, config.httpcredentials)
   end
 
-  local httppost = newconnection()
+  local httprequest = newrequester()
   self._fifo = FIFO()
 
   local timeout = config.retrytimeout
@@ -102,15 +102,14 @@ function Agent:__init()
           local event = fifo:pop()
           local requestid = event.id
           local json = event:json()
-          local ok, result = pcall(httppost, json)
+          local ok, result = pcall(httprequest, json)
           if not ok then
-            local exception = result[1]
             -- prevent IO-bound task when service is offline
             waitfor(timeout)
             -- recreate the connection and try again
-            httppost = newconnection()
+            httprequest = newrequester()
             fifo:push(event)
-            log:exception(msg.AuditAgentReconnecting:tag{error=exception or result, agent=threadid, request=requestid})
+            log:exception(msg.AuditAgentReconnecting:tag{error=result, agent=threadid, request=requestid})
           end
           cothread.last()
         end

@@ -33,41 +33,56 @@ local httprequest = http.request
 function http.connect(endpoint, location, credentials)
   local parsed = parseurl(endpoint)
   local url = endpoint..( location or "" )
-  local sock = newtcp()
+  local sock, errmsg = newtcp()
+  local threadid = tostring(running())
   if sock ~= nil then
     local ok, errmsg = sock:connect(parsed.host, parsed.port or http.PORT)
     if not ok then
-      log:exception(msg.HttpConnectFailed:tag{url=url, errmsg=errmsg})
+      -- close socket as soon as possible
+      sock:close()
+      sock = nil
+      log:exception(msg.HttpConnectFailed:tag{url=url, errmsg=errmsg, thread=threadid})
     end
   else
-    log:exception(msg.HttpConnectFailed:tag{url=url, errmsg="failed to create a new socket"})
+    log:exception(msg.UnableToCreateTcpSocket:tag{url=url, errmsg=errmsg, thread=threadid})
   end
   
   return 
   function (request, method, mimetype)
     local threadid = tostring(running())
     local body = {}
+    local mimetype = mimetype or "application/json"
+    local method = request and (method or "POST") or "GET"
     local ok, code, headers, status = httprequest{
       url = url,
       connection = sock,
-      create = newtcp,
-      source = strsrc(request),
+      source = request and strsrc(request) or nil,
       sink = tabsnk(body),
       headers = {
         ["authorization"] = (credentials and "Basic "..credentials) or nil,
-        ["content-length"] = #request,
-        ["content-type"] = mimetype or "application/json;charset=utf-8",
-        ["accept"] = mimetype or "application/json",
-        ["connection"] = "keep-alive",
+        ["content-length"] = request and #request or nil,
+        ["content-type"] = mimetype..";charset=utf-8",
+        ["accept"] = mimetype,
+        ["connection"] = sock and "keep-alive" or nil,
       },
-      method = method or "POST",
+      method = method,
     }
-    if not ok or (tonumber(code) ~= 200 and tonumber(code) ~= 201) then
-      local body = concat(body or {})
-      -- using error almost like an exception
-      error{msg.HttpPostFailed:tag{url=url, thread=threadid, code=code, status=status, body=body}}
+    if not ok or (code ~= 200 and code ~= 201) then
+      -- as keep-alive is used, we must close the socket by ourselves
+      if sock ~= nil then
+        sock:close()
+        sock = nil
+      end
+      local details
+      if code >= 300 and code < 400 then
+        details = {headers = headers}
+      elseif code >= 500 then
+        details = {response = concat(body or {}):gsub("[\r\n]","")}
+      end
+      error(msg.HttpRequestFailed:tag{url=url, method=method, thread=threadid,
+        code=code, status=status, details=details})
     else
-      return body
+      return body, headers
     end
   end
 end

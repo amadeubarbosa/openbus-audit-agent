@@ -2,6 +2,9 @@
 -- LuaSocket helper module
 -- Author: Diego Nehab
 -- RCS ID: $Id: socket.lua,v 1.22 2005/11/22 08:33:29 diego Exp $
+-- 
+-- Updates:
+-- 20171109 - Added LuaCoThread compatibility
 -----------------------------------------------------------------------------
 
 -----------------------------------------------------------------------------
