@@ -104,12 +104,13 @@ function Agent:__init()
           local json = event:json()
           local ok, result = pcall(httprequest, json)
           if not ok then
+            local exception = (type(result) == "table" and result[1]) or result
             -- prevent IO-bound task when service is offline
             waitfor(timeout)
             -- recreate the connection and try again
             httprequest = newrequester()
             fifo:push(event)
-            log:exception(msg.AuditAgentReconnecting:tag{error=result, agent=threadid, request=requestid})
+            log:exception(msg.AuditAgentRetrying:tag{error=exception, agent=threadid, request=requestid})
           end
           cothread.last()
         end

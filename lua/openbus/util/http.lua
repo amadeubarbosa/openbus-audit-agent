@@ -53,7 +53,7 @@ function http.connect(endpoint, location, credentials)
     local body = {}
     local mimetype = mimetype or "application/json"
     local method = request and (method or "POST") or "GET"
-    local ok, code, headers, status = httprequest{
+    local ok, ret, code, headers, status = pcall(httprequest, {
       url = url,
       connection = sock,
       source = request and strsrc(request) or nil,
@@ -66,21 +66,23 @@ function http.connect(endpoint, location, credentials)
         ["connection"] = sock and "keep-alive" or nil,
       },
       method = method,
-    }
-    if not ok or (code ~= 200 and code ~= 201) then
+    })
+    if not ok then
+      error{msg.HttpRequestFailed:tag{url=url, details=ret}}
+    elseif (code ~= 200 and code ~= 201) then
       -- as keep-alive is used, we must close the socket by ourselves
       if sock ~= nil then
         sock:close()
         sock = nil
       end
-      local details
+      local response
       if code >= 300 and code < 400 then
-        details = {headers = headers}
+        response = {headers = headers} -- just log headers
       elseif code >= 500 then
-        details = {response = concat(body or {}):gsub("[\r\n]","")}
+        response = {body = concat(body or {}):gsub("[\r\n]","")}
       end
-      error(msg.HttpRequestFailed:tag{url=url, method=method, thread=threadid,
-        code=code, status=status, details=details})
+      error{msg.UnexpectedHttpResponse:tag{url=url, method=method, thread=threadid,
+        code=code, status=status, response=response}}
     else
       return body, headers
     end

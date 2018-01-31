@@ -36,6 +36,11 @@ app.get('/test', auth, (req, res) => {
   res.end('Welcome test');
 })
 
+app.post('/error', (req, res) => {
+  console.log('Simulated 500 error');
+  res.sendStatus(500);
+})
+
 app.post('/public', (req, res) => {
   console.log('Received a public event ' + req.url)
   console.log(req.body);
