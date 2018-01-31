@@ -78,7 +78,7 @@ function http.connect(endpoint, location, credentials)
       local response
       if code >= 300 and code < 400 then
         response = {headers = headers} -- just log headers
-      elseif code >= 500 then
+      elseif code == 400 or code >= 500 then
         response = {body = concat(body or {}):gsub("[\r\n]","")}
       end
       error{msg.UnexpectedHttpResponse:tag{url=url, method=method, thread=threadid,
