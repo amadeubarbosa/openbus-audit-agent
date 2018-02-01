@@ -41,6 +41,18 @@ app.post('/error', (req, res) => {
   res.sendStatus(500);
 })
 
+async function blocking(req, res) {
+  console.log("processing request "+ req)
+  while(true) {console.log("oi vida") }
+}
+
+function task(k) {
+  console.log("continue "+k)
+  setTimeout(task, 1000, k)
+}
+var i=1
+app.post('/block', (req, res) => {task(i++)})
+
 app.post('/public', (req, res) => {
   console.log('Received a public event ' + req.url)
   console.log(req.body);
