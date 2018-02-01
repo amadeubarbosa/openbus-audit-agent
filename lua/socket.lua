@@ -13,26 +13,14 @@
 local base = _G
 local string = require("string")
 local math = require("math")
-local socket = require("cothread.socket")
-local _ENV = socket
+local cosocket = require("cothread.socket")
+local _ENV = {}
 
 -----------------------------------------------------------------------------
 -- Exported auxiliar functions
 -----------------------------------------------------------------------------
-function connect(address, port, laddress, lport)
-    local sock, err = socket.tcp()
-    if not sock then return nil, err end
-    if laddress then
-        local res, err = sock:bind(laddress, lport, -1)
-        if not res then return nil, err end
-    end
-    local res, err = sock:connect(address, port)
-    if not res then return nil, err end
-    return sock
-end
-
 function bind(host, port, backlog)
-    local sock, err = socket.tcp()
+    local sock, err = cosocket.tcp()
     if not sock then return nil, err end
     sock:setoption("reuseaddr", true)
     local res, err = sock:bind(host, port)
@@ -42,7 +30,7 @@ function bind(host, port, backlog)
     return sock
 end
 
-try = newtry()
+try = cosocket.newtry()
 
 function choose(table)
     return function(name, opt1, opt2)
@@ -101,7 +89,7 @@ sourcet["by-length"] = function(sock, length)
     }, {
         __call = function()
             if length <= 0 then return nil end
-            local size = math.min(socket.BLOCKSIZE, length)
+            local size = math.min(_ENV.BLOCKSIZE, length)
             local chunk, err = sock:receive(size)
             if err then return nil, err end
             length = length - string.len(chunk)
@@ -118,7 +106,7 @@ sourcet["until-closed"] = function(sock)
     }, {
         __call = function()
             if done then return nil end
-            local chunk, err, partial = sock:receive(socket.BLOCKSIZE)
+            local chunk, err, partial = sock:receive(_ENV.BLOCKSIZE)
             if not err then return chunk
             elseif err == "closed" then
                 sock:close()
@@ -134,4 +122,4 @@ sourcet["default"] = sourcet["until-closed"]
 
 source = choose(sourcet)
 
-return _ENV
+return base.setmetatable(_ENV, {__index = cosocket})
