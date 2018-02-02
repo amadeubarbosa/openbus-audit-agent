@@ -103,30 +103,7 @@ end
 -----------------------------------------------------------------------------
 -- Low level HTTP API
 -----------------------------------------------------------------------------
-local metat = { __index = {} }
-
-function wrap(sock)
-    local h = base.setmetatable({ c = sock }, metat)
-    -- create finalized try
-    h.try = socket.newtry(function() h:close() end)
-    -- set timeout before connecting
-    h.try(sock:settimeout(TIMEOUT))
-    -- here everything worked
-    return h
-end
-
-function open(host, port, create)
-    -- create socket with user connect function, or with default
-    local c = socket.try((create or socket.tcp)())
-    local h = base.setmetatable({ c = c }, metat)
-    -- create finalized try
-    h.try = socket.newtry(function() h:close() end)
-    -- set timeout before connecting
-    h.try(c:settimeout(TIMEOUT))
-    h.try(c:connect(host, port or PORT))
-    -- here everything worked
-    return h
-end
+local metat = { __index = {}, __mode = "v" }
 
 function metat.__index:sendrequestline(method, uri)
     local reqline = string.format("%s %s HTTP/1.1\r\n", method or "GET", uri)
@@ -188,6 +165,25 @@ function metat.__index:close()
     return self.c:close()
 end
 
+function wrapfinalize(sock)
+    local h = base.setmetatable({ c = sock }, metat)
+    -- create finalized try
+    h.try = socket.newtry(function() h:close() end)
+    -- set timeout before connecting
+    h.try(sock:settimeout(TIMEOUT))
+    -- here everything worked
+    return h
+end
+
+function open(host, port, create)
+    -- create socket with user connect function, or with default
+    local c = socket.try((create or socket.tcp)())
+    -- wrap with finalize function to close socket automatically
+    local h = wrapfinalize(c)
+    h.try(c:connect(host, port or PORT))
+    -- here everything worked
+    return h
+end
 -----------------------------------------------------------------------------
 -- High level HTTP API
 -----------------------------------------------------------------------------
@@ -303,10 +299,9 @@ function trequest(reqt)
     local nreqt = adjustrequest(reqt)
     local h do
         if shouldkeepalive(nreqt) and nreqt.connection ~= nil then
-            h = nreqt.connection and wrap(nreqt.connection)
+            h = wrapfinalize(nreqt.connection)
         else
             h = open(nreqt.host, nreqt.port, nreqt.create)
-            nreqt.connection = h
         end
     end
     -- send request line and headers

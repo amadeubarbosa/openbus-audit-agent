@@ -110,7 +110,7 @@ function Agent:__init()
             -- recreate the connection and try again
             httprequest = newrequester()
             fifo:push(event)
-            log:exception(msg.AuditAgentRetrying:tag{error=exception, agent=threadid, request=requestid})
+            log:exception(msg.AuditAgentRetrying:tag{error=exception, agent=threadid, fifolength=fifo:count(), request=requestid})
           end
           cothread.last()
         end
