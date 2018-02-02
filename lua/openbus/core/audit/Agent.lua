@@ -82,7 +82,6 @@ function Agent:__init()
     return http.connect(config.httpendpoint, nil, config.httpcredentials)
   end
 
-  local httprequest = newrequester()
   self._fifo = FIFO()
 
   local timeout = config.retrytimeout
@@ -93,6 +92,7 @@ function Agent:__init()
   local threads = self._threads
   for i=1, concurrency do
     local agent = newthread(function()
+      local httprequest = newrequester()
       local threadid = tostring(running())
       while true do
         if fifo:empty() then -- wait
