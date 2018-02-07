@@ -72,8 +72,9 @@ function AuditEvent:incoming(request, callerchain)
   local unknownuser = self.config.unknownuser
   local nullvalue = self.config.nullvalue
   data.timestamp = gettimeofday()
-  data.actionName = request.operation_name
+  data.actionName = request.operation_name or nullvalue
   data.userName = callerchain and callerchain.caller.entity or unknownuser
+  data.loginId = callerchain and callerchain.caller.id or unknownuser
   data.input = request.parameters
   -- optional data
   if callerchain then
@@ -82,7 +83,6 @@ function AuditEvent:incoming(request, callerchain)
     data.openbusProtocol = nullvalue
   end
   data.interfaceName = request.interface and request.interface.repID or nullvalue
-  data.loginId = callerchain and callerchain.caller.id or unknownuser
   data.ipOrigin = request.channel_address
 end
 
@@ -93,11 +93,11 @@ function AuditEvent:outgoing(request)
   data.output = request.results
 end
 
-local function stringfyparams(params, nullvalue)
-  if params and #params > 0 then
+local function stringfyparams(params)
+  if type(params) == "table" and #params > 0 then
     return b64encode(serializer:tostring(params))
   else
-    return nullvalue
+    return nil
   end
 end
 
@@ -123,10 +123,10 @@ function AuditEvent:format()
     data.ipOrigin = address and string.format("%s:%d", assert(address.host), assert(address.port)) or nullvalue
   end
   if type(data.input) ~= "string" then
-    data.input = stringfyparams(data.input, nullvalue)
+    data.input = stringfyparams(data.input) or nullvalue
   end
   if type(data.output) ~= "string" then
-    data.output = stringfyparams(data.output, nullvalue)
+    data.output = stringfyparams(data.output) or nullvalue
   end
   if type(data.resultCode) ~= "string" then
     data.resultCode = tostring(data.resultCode)
