@@ -4,15 +4,13 @@ local ipairs = _G.ipairs
 local pcall = _G.pcall
 local tostring = _G.tostring
 
+local newuuid = require("uuid").new
+
 local coroutine = require "coroutine"
-local running = coroutine.running
-local status = coroutine.status
 local newthread = coroutine.create
 
 local cothread = require "cothread"
-local schedule = cothread.schedule
-local unschedule = cothread.unschedule
-
+local running = cothread.running
 cothread.plugin(require "cothread.plugin.socket")
 local waitfor = require("cothread.socket").sleep
 
@@ -62,13 +60,14 @@ local Agent = class {
   _threads = {}, -- cothreads
   _waiting = {}, -- critical regions
   _fifo = false, -- FIFO object
+  _instance = "", -- instance uuid
 }
 
 local Default = {
   concurrency = 5, -- max cothreads using fifo
-  retrytimeout = 1, -- seconds to wait before retry http post
+  retrytimeout = 5, -- seconds to wait before retry http post
   discardonexit = false, -- option to discard events when shuts down
-  fifolimit = 1000000, -- FIFO limit before discard events
+  fifolimit = 100000, -- FIFO limit before discard events
   httpproxy = false, -- http proxy settings
   httpendpoint = "http://localhost:8080/", -- url of audit REST service
   httpcredentials = false, -- http basic authentication credentials
@@ -82,6 +81,7 @@ function Agent:__init()
     return http.connect(config.httpendpoint, nil, config.httpcredentials)
   end
 
+  self._instance = newuuid()
   self._fifo = FIFO()
 
   local timeout = config.retrytimeout
@@ -90,6 +90,8 @@ function Agent:__init()
   local fifo = self._fifo
   local waiting = self._waiting
   local threads = self._threads
+  local instance = self._instance
+
   for i=1, concurrency do
     local agent = newthread(function()
       local httprequest = newrequester()
@@ -110,7 +112,8 @@ function Agent:__init()
             -- recreate the connection and try again
             httprequest = newrequester()
             fifo:push(event)
-            log:exception(msg.AuditAgentRetrying:tag{error=exception, agent=threadid, fifolength=fifo:count(), request=requestid})
+            log:exception(msg.AuditAgentRetrying:tag{error=exception, agent=instance,
+              thread=threadid, fifolength=fifo:count(), request=requestid})
           end
           cothread.last()
         end
@@ -120,14 +123,17 @@ function Agent:__init()
     threads[i] = agent
     cothread.schedule(agent, "last")
   end
-  log:uptime(msg.AuditAgentStarted)
+  log:action(msg.AuditAgentStarted:tag{instance=instance})
 end
 
 function Agent:publish(...)
   local fifolimit = self.config.fifolimit
   local fifo = self._fifo
+  local instance = self._instance
   if fifo:count() > fifolimit then
-    log:exception(msg.AuditAgentDiscardingDataAfterFifoLimitReached:tag{limit=fifolimit})
+    log:exception(msg.AuditAgentDiscardingDataAfterFifoLimitReached:tag{
+      agent=instance, limit=fifolimit
+    })
   else
     fifo:push(...)
   end
@@ -153,6 +159,10 @@ function Agent:haspending()
   return (running ~= 0), running
 end
 
+function Agent:fifolength()
+  return self._fifo:count()
+end
+
 function Agent:unschedule()
   for i, thread in ipairs(self._threads) do
     cothread.unschedule(thread)
@@ -160,23 +170,34 @@ function Agent:unschedule()
 end
 
 function Agent:shutdown()
+  local instance = self._instance
   local fifo = self._fifo
-  cothread.schedule(newthread(function()
-    if self.config.discardonexit then
-      local _, count = self:haspending()
-      log:action(msg.AuditAgentDiscardingDataOnShutdown:tag{fifolength=fifo:count(), pendingthreads=count})
-      self:unschedule() -- just remove all threads from cothread scheduler
-    else
-      repeat
+  local discardonexit = self.config.discardonexit
+  local retrytimeout = self.config.retrytimeout
+
+  if fifo then
+    if not discardonexit then
+      local max = 10
+      for i=1, max do
         local haspending, count = self:haspending()
         if haspending then -- only for verbose
-          log:action(msg.AuditAgentWaitingForPendingThreads:tag{threads=count})
+          log:action(msg.AuditAgentWaitingForPendingThreads:tag{
+            agent=instance, threads=count, attempt=i.." of "..max})
+        else
+          break
         end
-        waitfor(.5)
-      until (haspending == false)
+        waitfor(retrytimeout/max)
+      end
     end
-    log:uptime(msg.AuditAgentTerminated)
-  end), "last")
+    local haspending, count = self:haspending()
+    if haspending then
+      log:action(msg.AuditAgentDiscardingDataOnShutdown:tag{
+        agent=instance, fifolength=fifo:count(), pendingthreads=count})
+    end
+    self:unschedule() -- remove all threads from cothread scheduler
+    log:action(msg.AuditAgentTerminated:tag{instance=instance})
+    self._fifo = false -- mark as stopped
+  end
 end
 
 return Agent
