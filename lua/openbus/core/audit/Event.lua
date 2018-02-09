@@ -2,8 +2,9 @@ local _G = require "_G"
 local assert = _G.assert
 local package = _G.package
 local pairs = _G.pairs
-local tostring = _G.tostring
 local type = _G.type
+local tostring = _G.tostring
+local setmetatable = _G.setmetatable
 
 local math = require "math"
 local table = require "table"
@@ -47,7 +48,7 @@ local serializer = viewer{
 
 local Default = {
   application = "OPENBUS",
-  instance = newuuid(),
+  environment = newuuid(),
   nullvalue = "null",
   unknownuser = "<unknown>",
   dateformat = "%Y-%m-%d %H:%M:%S",
@@ -57,10 +58,10 @@ local Default = {
 local AuditEvent = class{}
 
 function AuditEvent:__init()
-  local config = class(self.config or {}, Default)
+  local config = setmetatable(self.config or {}, {__index=Default})
   self.data = {
     solutionCode = config.application,
-    environment = config.instance,
+    environment = config.environment,
     id = newuuid(),
   }
   self.config = config
