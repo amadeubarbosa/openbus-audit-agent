@@ -111,11 +111,12 @@ function Agent:__init()
           local ok, result = pcall(httprequest, json)
           if not ok then
             local exception = (type(result) == "table" and result[1]) or result
+            -- push event back on fifo as soon as possible
+            fifo:push(event)
             -- prevent IO-bound task when service is offline
             waitfor(timeout)
             -- recreate the connection and try again
             httprequest = newrequester()
-            fifo:push(event)
             log:exception(msg.AuditAgentRetrying:tag{error=exception, agent=instance,
               thread=threadid, fifolength=fifo:count(), request=requestid})
           end
