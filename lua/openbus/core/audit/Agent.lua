@@ -135,7 +135,7 @@ function Agent:publish(...)
   local fifolimit = self.config.fifolimit
   local fifo = self._fifo
   local instance = self._instance
-  if fifo:count() > fifolimit then
+  if fifo:count() >= fifolimit then
     log:exception(msg.AuditAgentDiscardingDataAfterFifoLimitReached:tag{
       agent=instance, limit=fifolimit
     })
