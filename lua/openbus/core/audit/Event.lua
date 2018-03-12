@@ -16,6 +16,7 @@ cothread.plugin(require "cothread.plugin.socket")
 local gettimeofday = cothread.now
 local viewer = require "loop.debug.Viewer"
 local b64encode = require("base64").encode
+local json = require "json"
 local oil = require "oil" -- package.loaded usage depends on it
 local class = require("openbus.util.oo").class
 
@@ -29,15 +30,16 @@ local class = require("openbus.util.oo").class
 --     timestamp,
 --     actionName,
 --     userName,
---     loginId,
---     interfaceName,
---     openbusProtocol,
---     ipOrigin,
 --     input,
 --     -- reply
 --     duration,
 --     output,
 --     resultCode,
+--     -- extra properties
+--     openbusProtocol,
+--     interfaceName,
+--     loginId,
+--     ipOrigin,
 -- }
 --
 
@@ -63,6 +65,7 @@ function AuditEvent:__init()
     solutionCode = config.application,
     environment = config.environment,
     id = newuuid(),
+    properties = {},
   }
   self.config = config
   self.id = self.data.id
@@ -70,21 +73,24 @@ end
 
 function AuditEvent:incoming(request, callerchain)
   local data = self.data
+  local extra = data.properties
   local unknownuser = self.config.unknownuser
   local nullvalue = self.config.nullvalue
+
   data.timestamp = gettimeofday()
   data.actionName = request.operation_name or nullvalue
-  data.userName = callerchain and callerchain.caller.entity or unknownuser
-  data.loginId = callerchain and callerchain.caller.id or unknownuser
   data.input = request.parameters
-  -- optional data
   if callerchain then
-    data.openbusProtocol = (callerchain.islegacy and "v2_0") or "v2_1"
+    data.userName = callerchain and callerchain.caller.entity or unknownuser
+    extra.loginId = callerchain and callerchain.caller.id or unknownuser
+    extra.openbusProtocol = (callerchain and (callerchain.islegacy and "v2_0" or "v2_1")) or nullvalue
   else
-    data.openbusProtocol = nullvalue
+    data.userName = unknownuser
+    extra.loginId = unknownuser
+    extra.openbusProtocol = nullvalue
   end
-  data.interfaceName = request.interface and request.interface.repID or nullvalue
-  data.ipOrigin = request.channel_address
+  extra.interfaceName = request.interface and request.interface.repID or nullvalue
+  extra.ipOrigin = request.channel_address or nullvalue
 end
 
 function AuditEvent:outgoing(request)
@@ -112,16 +118,10 @@ function AuditEvent:format()
   local milipattern = self.config.miliformat
   local nullvalue = self.config.nullvalue
   local data = self.data
+  local extra = data.properties
 
   if type(data.timestamp) ~= "string" then
     data.timestamp = dateformat(data.timestamp, datepattern)
-  end
-  if type(data.interfaceName) ~= "string" then
-    data.interfaceName = tostring(data.interfaceName)
-  end
-  if type(data.ipOrigin) ~= "string" then
-    local address = data.ipOrigin
-    data.ipOrigin = address and string.format("%s:%d", assert(address.host), assert(address.port)) or nullvalue
   end
   if type(data.input) ~= "string" then
     data.input = stringfyparams(data.input) or nullvalue
@@ -135,16 +135,19 @@ function AuditEvent:format()
   if type(data.duration) ~= "string" then
     data.duration = string.format(milipattern, data.duration * 1000)
   end
+  if type(extra.interfaceName) ~= "string" then
+    extra.interfaceName = tostring(extra.interfaceName)
+  end
+  if type(extra.ipOrigin) ~= "string" then
+    local address = extra.ipOrigin
+    extra.ipOrigin = address and string.format("%s:%d", assert(address.host), assert(address.port)) or nullvalue
+  end
 end
 
 function AuditEvent:json()
   if self.jsondata == nil then
     self:format()
-    local result = {}
-    for k,v in pairs(self.data) do
-      table.insert(result, string.format("%q:%q", k,v))
-    end
-    self.jsondata = "{"..table.concat(result, ",").."}"
+    self.jsondata = json.encode(self.data)
     self.data = nil
   end
   return self.jsondata

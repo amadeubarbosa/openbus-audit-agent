@@ -33,7 +33,7 @@ setuplog(log, 5)
 -- configuration
 AuditEvent.config = {
   application = "BEEP",
-  instance = "TST",
+  environment = "TST",
 }
 
 -- main
