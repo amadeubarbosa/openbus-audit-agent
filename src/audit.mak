@@ -11,6 +11,7 @@ LUASRC= \
 	$(LUADIR)/socket.lua \
 	$(LUADIR)/socket/http.lua \
 	$(LUADIR)/socket/url.lua \
+	$(LUADIR)/json.lua \
 	$(LUADIR)/base64.lua \
 	$(LUADIR)/ltn12.lua
 
