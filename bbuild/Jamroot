@@ -43,6 +43,7 @@ make luaopenbusaudit.c
     $(root)/lua/socket.lua
     $(root)/lua/socket/http.lua
     $(root)/lua/socket/url.lua
+    $(root)/lua/json.lua
     $(root)/lua/base64.lua
     $(root)/lua/ltn12.lua
   : preloader.pre-compile
