@@ -1,0 +1,68 @@
+# -*- coding: iso-8859-1-unix -*-
+
+import os ;
+import modules ;
+
+path-constant here : . ;
+path-constant root : $(here)/.. ;
+path-constant deps : $(root)/.. ;
+
+local lua-package = [ os.environ LUA ] ;
+if ! $(lua-package)
+{
+  lua-package = "$(deps)/lua" ;
+}
+use-project lua : $(lua-package)/bbuild ; 
+
+local loop-package = [ os.environ LOOP ] ;
+if ! $(loop-package)
+{
+  loop-package = "$(deps)/loop" ;
+}
+use-project loop : $(loop-package)/bbuild ; 
+
+modules.load preloader : : $(loop-package)/bbuild ;
+import preloader ; 
+using preloader : $(lua-package) ;
+
+project luaopenbusaudit
+  : requirements
+    <target-os>windows:<pch>off
+    <target-os>windows,<link>shared:<runtime-link>shared
+    <target-os>windows,<link>static:<runtime-link>static
+    <target-os>windows:<debug-store>database
+    <target-os>windows:<define>_CRT_SECURE_NO_WARNINGS
+    <toolset>msvc-12.0:<cxxflags>/FS
+    <debug-symbols>on
+  ;
+
+make luaopenbusaudit.c
+  : $(root)/lua/openbus/core/audit/Agent.lua
+    $(root)/lua/openbus/core/audit/Event.lua
+    $(root)/lua/openbus/util/http.lua
+    $(root)/lua/socket.lua
+    $(root)/lua/socket/http.lua
+    $(root)/lua/socket/url.lua
+    $(root)/lua/base64.lua
+    $(root)/lua/ltn12.lua
+  : preloader.pre-compile
+  : <dependency>/lua//stage
+    <search>$(root)
+    <location>$(here)
+  ;
+
+lib luaopenbusaudit
+  : luaopenbusaudit.c
+  : <include>$(root)/src
+    <target-os>windows,<link>shared:<linkflags>"/def:$(here)/luaopenbusaudit.def"
+    <library>/lua//lua
+  :
+  : <include>$(here)
+  ;
+explicit luaopenbusaudit ;
+
+install stage
+  : luaopenbusaudit
+  : <location>install
+  ;
+  
